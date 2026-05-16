@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Time Keeper — Today screen explorations</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: #0e0c0a;
+    --surface: #161310;
+    --surface-2: #1e1a14;
+    --line: #2a241c;
+    --line-strong: #3a3024;
+    --ink: #f3ead4;
+    --ink-2: #c9bf9f;
+    --ink-3: #8a8167;
+    --ink-4: #5a5340;
+    --honey: #f0b429;
+    --honey-2: #d9991f;
+    --honey-deep: #8a5e10;
+    --amber: #c87c2c;
+    --cream: #efe4c8;
+    --green: #6fa66a;
+    --red:   #c46a52;
+  }
+  html, body { background: #0a0908; color: var(--ink); font-family: 'Inter', system-ui, sans-serif; }
+  body { font-feature-settings: 'cv11','ss01','ss03'; }
+  .mono { font-family: 'JetBrains Mono', ui-monospace, monospace; font-feature-settings: 'tnum','cv11'; letter-spacing: -0.01em; }
+  .tnum { font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+
+  /* Hex comb low-opacity bg pattern */
+  .hex-bg {
+    background-color: var(--bg);
+    background-image:
+      radial-gradient(circle at 50% 50%, rgba(240,180,41,0.05) 0 1px, transparent 1.5px),
+      url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='56' height='64' viewBox='0 0 56 64'><g fill='none' stroke='%23f0b429' stroke-opacity='0.06' stroke-width='1'><polygon points='28,2 53,17 53,47 28,62 3,47 3,17'/></g></svg>");
+    background-size: auto, 56px 64px;
+    background-position: 0 0, 0 0;
+  }
+  .hex-bg-warm {
+    background-color: #1a140d;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='42' height='48' viewBox='0 0 42 48'><g fill='none' stroke='%23f0b429' stroke-opacity='0.10' stroke-width='1'><polygon points='21,1 40,12.5 40,35.5 21,47 2,35.5 2,12.5'/></g></svg>");
+    background-size: 42px 48px;
+  }
+  .hex-divider {
+    height: 14px;
+    background: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='28' height='14' viewBox='0 0 28 14'><g fill='none' stroke='%23f0b429' stroke-opacity='0.30' stroke-width='1'><polygon points='14,1 26,7 14,13 2,7'/></g></svg>") repeat-x center;
+  }
+
+  /* Scrollbar (subtle) */
+  .scroll-y::-webkit-scrollbar { width: 4px; }
+  .scroll-y::-webkit-scrollbar-thumb { background: #2a241c; border-radius: 2px; }
+  .scroll-y::-webkit-scrollbar-track { background: transparent; }
+
+  /* Phone frame */
+  .phone {
+    width: 375px; height: 812px; overflow: hidden;
+    background: var(--bg); color: var(--ink);
+    border-radius: 36px;
+    box-shadow: 0 0 0 1px #1a1612, 0 20px 60px -20px rgba(0,0,0,0.8);
+    position: relative;
+  }
+  .phone-screen { position: absolute; inset: 0; overflow: hidden; }
+  .status-bar { height: 44px; padding: 0 22px; display:flex; align-items:center; justify-content:space-between; font-size: 14px; font-weight: 600; color: var(--ink); }
+  .home-indicator { position: absolute; bottom: 6px; left: 50%; transform: translateX(-50%); width: 134px; height: 5px; background: #5a5340; border-radius: 3px; opacity: 0.6; }
+
+  .chip { display:inline-flex; align-items:center; gap:6px; padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 500; }
+  .chip-line { border: 1px solid var(--line-strong); color: var(--ink-2); }
+  .chip-honey { background: rgba(240,180,41,0.12); color: var(--honey); border: 1px solid rgba(240,180,41,0.25); }
+  .chip-amber { background: rgba(200,124,44,0.12); color: var(--amber); border: 1px solid rgba(200,124,44,0.25); }
+  .chip-red   { background: rgba(196,106,82,0.10); color: var(--red); border: 1px solid rgba(196,106,82,0.25); }
+
+  .btn-primary {
+    background: linear-gradient(180deg, #f0b429 0%, #d9991f 100%);
+    color: #1a1207; font-weight: 700; border-radius: 14px;
+    box-shadow: 0 1px 0 rgba(255,255,255,0.25) inset, 0 -1px 0 rgba(0,0,0,0.2) inset, 0 8px 24px -10px rgba(240,180,41,0.45);
+  }
+  .btn-stop {
+    background: #2a1f17; color: var(--ink); border: 1px solid var(--line-strong); border-radius: 14px;
+  }
+  .btn-ghost {
+    background: transparent; color: var(--ink-2); border: 1px solid var(--line-strong); border-radius: 12px;
+  }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; }
+  .card-2 { background: var(--surface-2); border: 1px solid var(--line); border-radius: 16px; }
+
+  .ring-honey { box-shadow: inset 0 0 0 1px rgba(240,180,41,0.35); }
+
+  /* Hex tile (CSS clip) */
+  .hex-tile {
+    clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+  }
+  .hex-tile-flat {
+    clip-path: polygon(25% 0, 75% 0, 100% 50%, 75% 100%, 25% 100%, 0 50%);
+  }
+
+  /* Pulse for running timer */
+  @keyframes pulseDot { 0%,100% { opacity:0.4 } 50% { opacity: 1 } }
+  .pulse-dot { animation: pulseDot 1.6s ease-in-out infinite; }
+
+  /* tiny dotted underline label */
+  .eyebrow {
+    font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--ink-3);
+  }
+</style>
+</head>
+<body class="bg-[#0a0908]">
+
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+<script type="text/babel" src="design-canvas.jsx"></script>
+<script type="text/babel" src="primitives.jsx"></script>
+<script type="text/babel" src="bundle-v1.jsx"></script>
+
+<div id="root"></div>
+</body>
+</html>

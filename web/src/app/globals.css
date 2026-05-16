@@ -1,0 +1,168 @@
+@import "tailwindcss";
+
+:root {
+  --tk-bg: #0e0c0a;
+  --tk-bg-deep: #0a0908;
+  --tk-surface: #161310;
+  --tk-surface-2: #1e1a14;
+  --tk-line: #2a241c;
+  --tk-line-strong: #3a3024;
+  --tk-ink: #f3ead4;
+  --tk-ink-2: #c9bf9f;
+  --tk-ink-3: #8a8167;
+  --tk-ink-4: #5a5340;
+  --tk-honey: #f0b429;
+  --tk-honey-2: #d9991f;
+  --tk-honey-deep: #8a5e10;
+  --tk-amber: #c87c2c;
+  --tk-cream: #efe4c8;
+  --tk-green: #6fa66a;
+  --tk-red: #c46a52;
+}
+
+@theme inline {
+  --color-tk-bg: var(--tk-bg);
+  --color-tk-bg-deep: var(--tk-bg-deep);
+  --color-tk-surface: var(--tk-surface);
+  --color-tk-surface-2: var(--tk-surface-2);
+  --color-tk-line: var(--tk-line);
+  --color-tk-line-strong: var(--tk-line-strong);
+  --color-tk-ink: var(--tk-ink);
+  --color-tk-ink-2: var(--tk-ink-2);
+  --color-tk-ink-3: var(--tk-ink-3);
+  --color-tk-ink-4: var(--tk-ink-4);
+  --color-tk-honey: var(--tk-honey);
+  --color-tk-honey-2: var(--tk-honey-2);
+  --color-tk-cream: var(--tk-cream);
+  --color-tk-green: var(--tk-green);
+  --color-tk-red: var(--tk-red);
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, monospace;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  background: var(--tk-bg-deep);
+  color: var(--tk-ink);
+  font-family: var(--font-sans);
+  font-feature-settings: "cv11", "ss01", "ss03";
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-feature-settings: "tnum", "cv11";
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+.hex-bg-warm {
+  background-color: #1a140d;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='42' height='48' viewBox='0 0 42 48'><g fill='none' stroke='%23f0b429' stroke-opacity='0.10' stroke-width='1'><polygon points='21,1 40,12.5 40,35.5 21,47 2,35.5 2,12.5'/></g></svg>");
+  background-size: 42px 48px;
+}
+
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--tk-ink-3);
+}
+
+.btn-primary {
+  background: linear-gradient(180deg, #f0b429 0%, #d9991f 100%);
+  color: #1a1207;
+  font-weight: 700;
+  border-radius: 14px;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.25) inset,
+    0 -1px 0 rgba(0, 0, 0, 0.2) inset,
+    0 8px 24px -10px rgba(240, 180, 41, 0.45);
+}
+
+.btn-stop {
+  background: #2a1f17;
+  color: var(--tk-ink);
+  border: 1px solid var(--tk-line-strong);
+  border-radius: 14px;
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--tk-ink-2);
+  border: 1px solid var(--tk-line-strong);
+  border-radius: 12px;
+}
+
+.card {
+  background: var(--tk-surface);
+  border: 1px solid var(--tk-line);
+  border-radius: 16px;
+}
+
+.chip-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  border: 1px solid var(--tk-line-strong);
+  color: var(--tk-ink-2);
+}
+
+.chip-honey {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  background: rgba(240, 180, 41, 0.12);
+  color: var(--tk-honey);
+  border: 1px solid rgba(240, 180, 41, 0.25);
+}
+
+.chip-red {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  background: rgba(196, 106, 82, 0.1);
+  color: var(--tk-red);
+  border: 1px solid rgba(196, 106, 82, 0.25);
+}
+
+.ring-honey {
+  box-shadow: inset 0 0 0 1px rgba(240, 180, 41, 0.35);
+}
+
+@keyframes pulseDot {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.pulse-dot {
+  animation: pulseDot 1.6s ease-in-out infinite;
+}
+
+.scroll-y::-webkit-scrollbar {
+  width: 4px;
+}
+.scroll-y::-webkit-scrollbar-thumb {
+  background: #2a241c;
+  border-radius: 2px;
+}

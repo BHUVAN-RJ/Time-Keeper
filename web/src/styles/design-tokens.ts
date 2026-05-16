@@ -1,0 +1,20 @@
+/** Design tokens — see docs/design.md and Time-keeper kitchen sink :root */
+export const designTokens = {
+  bg: "#0e0c0a",
+  bgDeep: "#0a0908",
+  surface: "#161310",
+  surface2: "#1e1a14",
+  line: "#2a241c",
+  lineStrong: "#3a3024",
+  ink: "#f3ead4",
+  ink2: "#c9bf9f",
+  ink3: "#8a8167",
+  ink4: "#5a5340",
+  honey: "#f0b429",
+  honey2: "#d9991f",
+  honeyDeep: "#8a5e10",
+  amber: "#c87c2c",
+  cream: "#efe4c8",
+  green: "#6fa66a",
+  red: "#c46a52",
+} as const;
