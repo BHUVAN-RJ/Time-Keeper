@@ -1,22 +1,44 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { GoogleCalendarSettings } from "@/components/google-calendar-settings";
 import {
   getShowScoreOnToday,
   setShowScoreOnToday,
 } from "@/lib/display-settings";
 
-export function SettingsClient() {
-  const [showScore, setShowScore] = useState(() =>
-    typeof window !== "undefined" ? getShowScoreOnToday() : false,
-  );
+type GoogleCal = Awaited<
+  ReturnType<typeof import("@/actions/google-calendar").getGoogleCalendarSettings>
+>;
+
+export function SettingsClient({
+  googleCalendar,
+  gcalStatus,
+}: {
+  googleCalendar: GoogleCal;
+  gcalStatus?: string;
+}) {
+  const [showScore, setShowScore] = useState(false);
+
+  useEffect(() => {
+    setShowScore(getShowScoreOnToday());
+  }, []);
 
   return (
     <div className="flex flex-col gap-6 py-2">
       <div>
         <h1 className="text-xl font-semibold text-tk-ink">Settings</h1>
       </div>
+
+      <GoogleCalendarSettings
+        configured={googleCalendar.configured}
+        accounts={googleCalendar.accounts}
+        statusKey={gcalStatus}
+        redirectUri={googleCalendar.redirectUri}
+        builtinExcludeSummary={googleCalendar.builtinExcludeSummary}
+        excludeCustomLines={googleCalendar.excludeCustomLines}
+      />
 
       <section className="card p-4">
         <h2 className="text-[13px] font-semibold text-tk-ink">Display</h2>
@@ -32,12 +54,8 @@ export function SettingsClient() {
           />
           <span className="text-[13px] text-tk-ink-2">
             Show productivity score on Today screen
-            <span
-              className="mt-1 block text-[11px] text-tk-ink-4"
-              title="Off by default — research suggests constant score visibility can either dull reward or compound stress. Enable if you want it anyway."
-            >
-              Off by default. Small widget top-right when enabled — never the
-              main focus.
+            <span className="mt-1 block text-[11px] text-tk-ink-4">
+              Off by default. Small widget top-right when enabled.
             </span>
           </span>
         </label>

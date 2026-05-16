@@ -11,6 +11,8 @@ import {
   rollingProductivityAvg,
 } from "@/lib/day-compute";
 import { ensureDefaultCategories } from "@/lib/ensure-categories";
+import { fetchCalendarEventsForRange } from "@/lib/google-calendar/service";
+import { eventOnDate, multiDayRangeUtc } from "@/lib/google-calendar/ranges";
 import { addDays, format, parseISO } from "date-fns";
 
 async function requireUser() {
@@ -52,11 +54,30 @@ export async function getAmRundownData() {
       ? `habits ${Math.round(yStatus.habitsCompletionPercent)}%`
       : null;
 
+  const tomorrow = format(addDays(parseISO(today), 1), "yyyy-MM-dd");
+  const range = multiDayRangeUtc(today, tomorrow, timezone);
+  const cal = await fetchCalendarEventsForRange(
+    userId,
+    today,
+    tomorrow,
+    range.timeMin,
+    range.timeMax,
+  );
+  const calendarToday = cal.events
+    .filter((ev) => eventOnDate(ev, today, timezone))
+    .slice(0, 6);
+  const calendarTomorrow = cal.events
+    .filter((ev) => eventOnDate(ev, tomorrow, timezone))
+    .slice(0, 4);
+
   return {
     show,
     rollingAvg,
     yesterdayScore,
     yesterdayHabitsLine,
+    calendarToday,
+    calendarTomorrow,
+    calendarMeta: cal.meta,
   };
 }
 

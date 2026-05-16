@@ -50,6 +50,32 @@ export function AmRundownModal({ data }: { data: Data }) {
                 : ""}
             </p>
           ) : null}
+          {data.calendarMeta.connected &&
+          (data.calendarToday.length > 0 || data.calendarTomorrow.length > 0) ? (
+            <div className="mt-4 text-left">
+              <p className="text-[11px] font-medium uppercase tracking-wide text-tk-ink-3">
+                Calendar
+              </p>
+              {data.calendarToday.length > 0 ? (
+                <ul className="mt-2 flex flex-col gap-1 text-[12px] text-tk-ink-2">
+                  {data.calendarToday.map((ev) => (
+                    <li key={ev.id}>
+                      Today: <span className="text-tk-ink">{ev.title}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+              {data.calendarTomorrow.length > 0 ? (
+                <ul className="mt-2 flex flex-col gap-1 text-[12px] text-tk-ink-3">
+                  {data.calendarTomorrow.map((ev) => (
+                    <li key={ev.id}>
+                      Tomorrow: <span className="text-tk-ink">{ev.title}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          ) : null}
           <p className="mt-4 text-[12px] text-tk-ink-4">
             Today&apos;s score stays hidden until you close the day.
           </p>

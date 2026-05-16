@@ -296,3 +296,61 @@ export const timeBlocksRelations = relations(timeBlocks, ({ one }) => ({
     references: [tasks.id],
   }),
 }));
+
+export const googleCalendarAccounts = sqliteTable(
+  "google_calendar_accounts",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    googleEmail: text("google_email").notNull(),
+    refreshTokenEnc: text("refresh_token_enc").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => ({
+    userEmailUnique: uniqueIndex("google_calendar_accounts_user_email").on(
+      t.userId,
+      t.googleEmail,
+    ),
+  }),
+);
+
+export const userPreferences = sqliteTable("user_preferences", {
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => users.id, { onDelete: "cascade" }),
+  /** Extra lines matched against event titles (built-in rules always apply). */
+  calendarExcludePatterns: text("calendar_exclude_patterns"),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
+export const googleCalendarEventCache = sqliteTable(
+  "google_calendar_event_cache",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    rangeStart: text("range_start").notNull(),
+    rangeEnd: text("range_end").notNull(),
+    eventsJson: text("events_json").notNull(),
+    fetchedAt: integer("fetched_at", { mode: "timestamp_ms" }).notNull(),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => ({
+    pk: primaryKey({
+      columns: [t.userId, t.rangeStart, t.rangeEnd],
+    }),
+  }),
+);

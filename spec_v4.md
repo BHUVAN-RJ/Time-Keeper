@@ -32,7 +32,7 @@ A productivity app does not fix ADHD. It supports an already-functional system. 
 ## 3. Non-goals (v1)
 
 - Multi-user team features, billing.
-- Full Google Calendar sync (read/write, multi-account) — deferred to v1.0+; **read-only calendar context for Weekly Rundown** ships with v0.2 (see §6.17).
+- Google Calendar **write-back** and conflict resolution — v1.0+; **read-only, multi-account context** shipped in v0.2 (see §6.17 and §9 v0.2 implementation status).
 - iOS push notifications (Apple's PWA push is unreliable; in-app banners only).
 - Native iOS/Android apps.
 - Idle auto-stop on tracked time.
@@ -463,13 +463,23 @@ A dedicated **Week** screen section (or sub-view) that helps you close the curre
 
 **When to show:** always available from Week tab; optional banner Sunday evening / Monday AM: “Review this week & prep next.”
 
-**Google Calendar scope in v0.2:**
+**Google Calendar scope in v0.2 (spec intent):**
 - OAuth 2.0, store refresh token encrypted per user.
 - Read events in date range only; no write-back.
-- Settings: pick calendars to include, default visibility on/off for Weekly Rundown.
-- **Not in v0.2:** creating events from Time Keeper, multi-write sync, conflict resolution, idle detection from calendar.
+- Settings: connect/disconnect accounts; show events on Week / Today / AM rundown.
 
-**v1.0+** expands to multi-account, optional write-back (“block focus time on calendar”), and smarter merge with `time_blocks`.
+**As built in this repo (v0.2 complete — see §9 and `docs/v0.2-phase.md`):**
+- **Separate OAuth** from Auth.js magic-link login (`/api/google-calendar/*`, not the Google provider on NextAuth).
+- **Multiple Google accounts** per user (`google_calendar_accounts`, unique on user + email).
+- **All calendars** on each connected account (no per-calendar picker UI — reduces settings friction; edu clutter filtered by title).
+- **Encrypted refresh tokens** (`GOOGLE_TOKEN_ENCRYPTION_KEY`, AES-256-GCM in `web/src/lib/token-crypto.ts`).
+- **15-minute DB cache** per user + date range (`google_calendar_event_cache`); poll every 15 min while app is open; on fetch failure, **serve stale cache** with warning.
+- **Title filters:** built-in patterns (office hours, OH, drop-in, TA office, …) always applied; optional extra lines in `user_preferences.calendar_exclude_patterns` (Settings). Post-fetch only — Calendar API cannot exclude by title in the query.
+- **Surfaces:** Week (this week + next week), Today calendar peek, AM rundown today/tomorrow.
+
+**Not in v0.2:** per-calendar toggles, creating events from Time Keeper, write-back, conflict resolution, idle detection from calendar.
+
+**v1.0+** expands optional write-back (“block focus time on calendar”) and smarter merge with `time_blocks`.
 
 ### 6.13 Weekly Retrospective (Sunday) *(v0.3+)*
 
@@ -642,24 +652,43 @@ The following are **implemented** in the Next.js app under `web/`: Resend magic 
 
 **Not in v0.1:** Week/month/all-time **history** and Stats tab content are scheduled in **v0.2+** (see §6.16 and §9). Today only lists blocks that **overlap the current calendar day** in the user’s timezone.
 
-### v0.2 — Tasks + Schedule (3–5 days)
+### v0.2 — Tasks + Schedule — **COMPLETE** (`main`, May 2026)
 **Goal:** scheduling, the End Day loop, and basic ADHD ergonomics.
+
+**Shipped checklist** (all items below are in `web/` on `main`):
 
 - Schedule goals per category
 - Day status calculation + red-day logic
 - **Rolling 7-day average as primary dashboard metric**
-- Weekly view + **Weekly Rundown** (this week recap + next week prep; §6.17)
-- **Google Calendar read-only** for next-week agenda in Weekly Rundown (OAuth in Settings)
+- Weekly view + **Weekly Rundown** (partial §6.17: per-day scores, off-day revert, next-week tasks + GCal)
+- **Google Calendar read-only** (multi-account, all calendars, title filters — §6.17 “as built”)
 - Tasks: create with required estimate, list (Today + Backlog), complete, link to time blocks
 - Task estimate-vs-actual on completion
 - Free-time category spending (display)
-- End Day button + basic PM Review (incomplete tasks reschedule, basic stats)
+- End Day button + basic PM Review
+- **Stats** `/stats` — 30-day history (completed/dropped tasks, End Day notes, time blocks)
+- Quality ratings **chores** + **meh** (0.5× multiplier)
 - Offline reads via service worker
 - **"What's next" button** (ADHD feature C)
 - **Quick add via Ctrl/Cmd+K** with regex parsing (ADHD feature D)
 - **Graceful drop button on tasks** with required reason (ADHD feature K, partial)
 
-### v0.3 — Habits, Rituals, ADHD core (5–7 days)
+#### v0.2 implementation status (this repo, `web/`)
+
+**Authoritative detail:** [`docs/v0.2-phase.md`](docs/v0.2-phase.md) — routes, migrations, Google Calendar rationale, env vars, spec deltas.
+
+**Migrations:** `0001` tasks/schedule, `0002` day status, `0003` quality chores/meh, `0004` google calendar tables, `0005` `user_preferences.calendar_exclude_patterns`. Always run `cd web && npm run db:migrate` after pull.
+
+**Routes:** `/today`, `/week`, `/tasks`, `/categories`, `/stats`, `/settings`.
+
+**Partial vs spec (intentional, do not “fix” without user ask):**
+- Weekly Rundown Part A lacks full “time by category vs goals” chart on Week.
+- No per-calendar include/exclude UI — all calendars per account; use title filters for `.edu` office hours.
+- AM rundown exists but not full §6.12 (tomorrow top 3 pinning, batch close unclosed days) — v0.3.
+
+**Next phase:** v0.3 only (§9 below). Do not implement v0.3+v0.4 in one pass.
+
+### v0.3 — Habits, Rituals, ADHD core (5–7 days) — **NEXT**
 **Goal:** the full daily/weekly loop and the ADHD features that need data to work.
 
 - Habits: CRUD, today checklist, weekly heatmap
@@ -722,12 +751,14 @@ The following are **implemented** in the Next.js app under `web/`: Resend magic 
 
 ## 10. Handoff to coding agent
 
-1. Give agent this spec + `tech_setup.md`.
-2. Implement **only v0.1**, then stop.
-3. Use for 5–7 days. Note what's broken or missing.
-4. Update spec based on real usage. 30% of design decisions will be wrong; only daily use reveals which.
-5. Then v0.2.
+**Current state (May 2026):** v0.1 and **v0.2 are complete** on `main`. Read this spec + [`tech_setup_v2.md`](tech_setup_v2.md) + phase docs [`docs/v0.1-phase.md`](docs/v0.1-phase.md) and [`docs/v0.2-phase.md`](docs/v0.2-phase.md).
+
+1. Implement **only the next phase** (currently **v0.3** per §9), then stop for dogfooding.
+2. **Do not** rebuild v0.2 Google Calendar as Auth.js Google provider — calendar OAuth is intentionally separate (see `docs/v0.2-phase.md` §2).
+3. Run migrations after schema changes: `cd web && source .env.local && npm run db:migrate`.
+4. Match existing patterns: server actions, Drizzle schema, design tokens in `globals.css`, Sonner toasts bottom-center.
+5. When v0.3 ships, add `docs/v0.3-phase.md` and update §9 status the same way v0.2 was closed out.
 
 **Do not** let the agent build the whole spec in one pass. The cost isn't tokens — it's that rebuilding wrong abstractions later costs more than building correctly the second time.
 
-The spec is a north star. Most of it might never get built and that's fine. Build v0.1, use for a week, then pick the ONE thing from this doc that would help you most. Build that. Repeat. Most of v0.4 and v0.5 will probably never ship, and you should be OK with that outcome.
+The spec is a north star. Most of v0.4 and v0.5 may never ship; that's acceptable. Ship one phase, use it, then the next.

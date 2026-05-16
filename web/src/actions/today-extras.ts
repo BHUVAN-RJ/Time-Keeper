@@ -7,6 +7,10 @@ import { and, eq, inArray, or } from "drizzle-orm";
 import { calendarDayInTz } from "@/lib/calendar-day";
 import { ensureDefaultCategories } from "@/lib/ensure-categories";
 import { compareTasksForToday, type TaskLike } from "@/lib/task-utils";
+import { fetchCalendarEventsForRange } from "@/lib/google-calendar/service";
+import { eventOnDate, multiDayRangeUtc } from "@/lib/google-calendar/ranges";
+import type { CalendarEventsResult } from "@/lib/google-calendar/types";
+import { addDays, format, parseISO } from "date-fns";
 
 const ACTIVE = ["backlog", "scheduled", "in_progress"] as const;
 
@@ -59,11 +63,28 @@ export async function getTodayDashboardExtras() {
 
   const whatsNext = todayTasks[0] ?? null;
 
+  const tomorrow = format(addDays(parseISO(today), 1), "yyyy-MM-dd");
+  const range = multiDayRangeUtc(today, tomorrow, timezone);
+  const calendarRange: CalendarEventsResult =
+    await fetchCalendarEventsForRange(
+      id,
+      today,
+      tomorrow,
+      range.timeMin,
+      range.timeMax,
+    );
+  const calendarToday = calendarRange.events.filter((ev) =>
+    eventOnDate(ev, today, timezone),
+  );
+
   return {
+    timezone,
     today,
     todayTasks,
     whatsNext,
     dayEnded: !!statusRow?.endedAt,
     isOffDay: !!statusRow?.isOffDay,
+    calendarToday,
+    calendarMeta: calendarRange.meta,
   };
 }

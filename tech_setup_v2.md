@@ -144,12 +144,24 @@ AUTH_URL=http://localhost:3000
 
 RESEND_API_KEY=re_...
 AUTH_RESEND_FROM=onboarding@resend.dev
+
+# v0.2+ Google Calendar (read-only; optional until you connect in Settings)
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_TOKEN_ENCRYPTION_KEY=
 ```
 
-Generate `AUTH_SECRET`:
+Generate secrets:
+
 ```bash
-openssl rand -base64 32
+openssl rand -base64 32   # AUTH_SECRET and GOOGLE_TOKEN_ENCRYPTION_KEY (use two runs)
 ```
+
+**Google Calendar OAuth (v0.2+):** In [Google Cloud Console](https://console.cloud.google.com/) create an OAuth client (Web). Authorized redirect URI must be exactly:
+
+`{AUTH_URL}/api/google-calendar/callback`
+
+(e.g. `http://localhost:3000/api/google-calendar/callback` for local dev). This flow is **separate** from Auth.js magic-link login. See `docs/v0.2-phase.md` §2.
 
 ### 3.5 Drizzle schema
 

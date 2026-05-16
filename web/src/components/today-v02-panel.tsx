@@ -9,6 +9,8 @@ import { toast } from "sonner";
 import type { getTodayDashboardExtras } from "@/actions/today-extras";
 import { startBlockForTaskAction } from "@/actions/time-blocks";
 import { EndDayDialog } from "@/components/end-day-dialog";
+import { CalendarStaleBanner } from "@/components/calendar-events-list";
+import { formatEventWhen } from "@/lib/google-calendar/format";
 import { useQuickAdd } from "@/components/quick-add-context";
 
 type Extras = Awaited<ReturnType<typeof getTodayDashboardExtras>>;
@@ -88,6 +90,27 @@ export function TodayV02Panel({
           </Link>
         </div>
       )}
+
+      {extras.calendarMeta.connected && extras.calendarToday.length > 0 ? (
+        <div className="card p-4">
+          <div className="eyebrow">Today on calendar</div>
+          <CalendarStaleBanner meta={extras.calendarMeta} />
+          <ul className="mt-2 flex flex-col gap-1.5">
+            {extras.calendarToday.slice(0, 6).map((ev) => (
+              <li key={ev.id} className="text-[12px] text-tk-ink-2">
+                <span className="font-medium text-tk-ink">{ev.title}</span>
+                <span className="text-tk-ink-4">
+                  {" "}
+                  · {formatEventWhen(ev, extras.timezone)}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <Link href="/week" className="mt-2 inline-block text-[11px] text-tk-honey">
+            Week rundown →
+          </Link>
+        </div>
+      ) : null}
 
       <div className="flex flex-wrap gap-2">
         <button
