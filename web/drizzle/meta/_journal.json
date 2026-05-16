@@ -15,6 +15,20 @@
       "when": 1778912444950,
       "tag": "0001_hesitant_thing",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1778913047380,
+      "tag": "0002_icy_misty_knight",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1778958000000,
+      "tag": "0003_quality_chores",
+      "breakpoints": true
     }
   ]
 }

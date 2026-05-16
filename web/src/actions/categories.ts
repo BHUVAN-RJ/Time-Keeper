@@ -11,8 +11,9 @@ async function requireUser() {
   const session = await auth();
   const id = session?.user?.id;
   if (!id) throw new Error("Unauthorized");
-  await ensureDefaultCategories(id);
-  return { userId: id };
+  const timezone = session.user.timezone ?? "America/Los_Angeles";
+  await ensureDefaultCategories(id, timezone);
+  return { userId: id, timezone };
 }
 
 export async function listCategoriesForUser() {

@@ -2,9 +2,10 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Dialog from "@radix-ui/react-dialog";
-import { Pencil, Plus, Square, Trash2 } from "lucide-react";
+import { Pencil, Plus, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
+import type { getTodayDashboardExtras } from "@/actions/today-extras";
 import {
   createManualBlockAction,
   deleteBlockAction,
@@ -14,8 +15,19 @@ import {
   updateBlockAction,
   type TodayBlockRow,
 } from "@/actions/time-blocks";
-import type { Quality } from "@/lib/credits";
+import { markOffDayAction } from "@/actions/day-status";
+import { RevertOffDayButton } from "@/components/revert-off-day-button";
+import { FocusModeView } from "@/components/focus-mode-view";
+import { OffDayCheckModal } from "@/components/off-day-check-modal";
+import { TodayScoreWidget } from "@/components/today-score-widget";
+import { TodayV02Panel } from "@/components/today-v02-panel";
 import { formatCredits } from "@/lib/credits";
+import { QualityPicker } from "@/components/quality-picker";
+import {
+  normalizeQuality,
+  qualityLabel,
+  type Quality,
+} from "@/lib/quality";
 import {
   clearFocusSession,
   readFocusSession,
@@ -23,6 +35,7 @@ import {
 } from "@/lib/focus-session-storage";
 
 type Initial = Awaited<ReturnType<typeof getTodayData>>;
+type Extras = Awaited<ReturnType<typeof getTodayDashboardExtras>>;
 
 function fmt(iso: string, tz: string) {
   return new Intl.DateTimeFormat("en-US", {
@@ -65,10 +78,12 @@ function RunningBlockPrimaryClock({
   blockId,
   startIso,
   serverSeconds,
+  size = "default",
 }: {
   blockId: string;
   startIso: string;
   serverSeconds: number;
+  size?: "default" | "focus";
 }) {
   const [targetMin, setTargetMin] = useState<number | null>(() => {
     if (typeof window === "undefined") return null;
@@ -124,7 +139,9 @@ function RunningBlockPrimaryClock({
   }, [startIso, targetMin]);
 
   const digitsClass =
-    "mono text-[40px] font-semibold leading-none sm:text-[44px]";
+    size === "focus"
+      ? "mono text-[56px] font-semibold leading-none sm:text-[72px]"
+      : "mono text-[40px] font-semibold leading-none sm:text-[44px]";
 
   if (targetMin != null) {
     const over = remainSec < 0;
@@ -161,7 +178,13 @@ function RunningBlockPrimaryClock({
   );
 }
 
-export function TodayClient({ initial }: { initial: Initial }) {
+export function TodayClient({
+  initial,
+  extras,
+}: {
+  initial: Initial;
+  extras: Extras;
+}) {
   const qc = useQueryClient();
   const { data = initial, isFetching } = useQuery({
     queryKey: ["today"],
@@ -202,6 +225,8 @@ export function TodayClient({ initial }: { initial: Initial }) {
   const [manualCat, setManualCat] = useState("");
   const [manualQuality, setManualQuality] = useState<Quality>("useful");
   const [focusTargetMin, setFocusTargetMin] = useState<number | null>(null);
+  const [offDayCheckOpen, setOffDayCheckOpen] = useState(false);
+  const [offDaysIn30, setOffDaysIn30] = useState(0);
 
   useEffect(() => {
     if (!data.running?.id) return;
@@ -237,9 +262,14 @@ export function TodayClient({ initial }: { initial: Initial }) {
       toast.error("Label is required.");
       return;
     }
+    const categoryId = stopCat || running.categoryId;
+    if (!categoryId) {
+      toast.error("Category is required.");
+      return;
+    }
     await stopBlockAction({
       blockId: running.id,
-      categoryId: stopCat,
+      categoryId,
       label: stopLabel,
       quality: stopQuality,
       notes: stopNotes || undefined,
@@ -257,21 +287,21 @@ export function TodayClient({ initial }: { initial: Initial }) {
       toast.error("Category and label required.");
       return;
     }
-    try {
-      await createManualBlockAction({
-        categoryId: manualCat,
-        startAt: manualStart,
-        endAt: manualEnd,
-        label: manualLabel,
-        quality: manualQuality,
-      });
-      setManualOpen(false);
-      setManualLabel("");
-      toast.success("Block added");
-      await qc.invalidateQueries({ queryKey: ["today"] });
-    } catch {
-      toast.error("Invalid times or overlap.");
+    const res = await createManualBlockAction({
+      categoryId: manualCat,
+      startAt: manualStart,
+      endAt: manualEnd,
+      label: manualLabel,
+      quality: manualQuality,
+    });
+    if (!res.ok) {
+      toast.error(res.error);
+      return;
     }
+    setManualOpen(false);
+    setManualLabel("");
+    toast.success("Block added");
+    await qc.invalidateQueries({ queryKey: ["today"] });
   }
 
   async function onEditSave() {
@@ -280,12 +310,12 @@ export function TodayClient({ initial }: { initial: Initial }) {
       toast.error("Label required.");
       return;
     }
-    const q = editRow.quality as Quality | null;
-    if (!q || (q !== "useful" && q !== "meh" && q !== "wasted")) {
+    const q = normalizeQuality(editRow.quality);
+    if (!q) {
       toast.error("Quality required for completed blocks.");
       return;
     }
-    await updateBlockAction({
+    const res = await updateBlockAction({
       blockId: editRow.id,
       categoryId: editRow.categoryId,
       startAt: editRow.startAt,
@@ -293,6 +323,10 @@ export function TodayClient({ initial }: { initial: Initial }) {
       label: editRow.label,
       quality: q,
     });
+    if (!res.ok) {
+      toast.error(res.error);
+      return;
+    }
     setEditRow(null);
     toast.success("Updated");
     await qc.invalidateQueries({ queryKey: ["today"] });
@@ -307,168 +341,80 @@ export function TodayClient({ initial }: { initial: Initial }) {
 
   const todayLabel = data.calendarHeadline;
 
-  const balanceColor =
-    data.creditBalance < 0 ? "text-tk-red" : "text-tk-honey";
+  async function onMarkOffDay() {
+    const res = await markOffDayAction();
+    if (!res.ok && res.needsCheckIn) {
+      setOffDaysIn30(res.offDaysIn30);
+      setOffDayCheckOpen(true);
+    } else {
+      toast.success("Today is an off day");
+      await qc.invalidateQueries({ queryKey: ["today"] });
+    }
+  }
 
   return (
-    <div className="flex flex-1 flex-col gap-4 pb-8">
+    <>
+      <TodayScoreWidget />
+      {running ? (
+        <FocusModeView
+          running={running}
+          clock={
+            <RunningBlockPrimaryClock
+              key={`${running.id}-${data.runningElapsedSeconds}-focus`}
+              blockId={running.id}
+              startIso={running.startAt}
+              serverSeconds={data.runningElapsedSeconds}
+              size="focus"
+            />
+          }
+          stopOpen={stopOpen}
+          setStopOpen={setStopOpen}
+          stopLabel={stopLabel}
+          setStopLabel={setStopLabel}
+          stopQuality={stopQuality}
+          setStopQuality={setStopQuality}
+          onOpenStop={() => setStopCat(running.categoryId)}
+          onStopSubmit={() => void onStopSubmit()}
+        />
+      ) : null}
+      <OffDayCheckModal
+        open={offDayCheckOpen}
+        onOpenChange={setOffDayCheckOpen}
+        offDaysIn30={offDaysIn30}
+        onDone={() => void qc.invalidateQueries({ queryKey: ["today"] })}
+      />
+      <div
+        className={`flex flex-1 flex-col gap-4 pb-8 ${running ? "hidden" : ""}`}
+      >
       {isFetching ? (
         <div className="text-center text-[11px] text-tk-ink-4">Updating…</div>
       ) : null}
 
-      <div className="flex items-baseline justify-between px-1">
-        <div>
-          <div className="text-[22px] font-semibold tracking-tight text-tk-ink">
-            {todayLabel}
-          </div>
-          <div className="eyebrow mt-1">Credits (all time)</div>
-          <div
-            className={`mono mt-1 text-[20px] font-semibold ${balanceColor}`}
-          >
-            {formatCredits(data.creditBalance)}
-          </div>
+      <TodayV02Panel
+        extras={extras}
+        runningBlockId={running?.id ?? null}
+        onNeedStop={() => {
+          if (running) setStopOpen(true);
+        }}
+      />
+
+      <div className="px-1">
+        <div className="text-[22px] font-semibold tracking-tight text-tk-ink">
+          {todayLabel}
         </div>
+        {extras.isOffDay ? (
+          <div className="mt-1 flex flex-wrap items-center gap-2 text-[12px] text-tk-ink-3">
+            <span>Today is an off day</span>
+            <RevertOffDayButton
+              date={extras.today}
+              className="text-[12px] text-tk-honey hover:underline"
+            />
+          </div>
+        ) : null}
       </div>
 
-      {data.suspiciousLongRun ? (
-        <div className="chip-red text-[12px]">
-          Suspiciously long block — forget to stop?
-        </div>
-      ) : null}
-
-      {running ? (
-        <div className="ring-honey shrink-0 overflow-hidden rounded-2xl bg-gradient-to-b from-[#1c160d] to-[#14100a]">
-          <div className="hex-bg-warm px-4 pb-4 pt-3">
-            <div className="flex items-center justify-between text-[11px]">
-              <div className="flex items-center gap-2">
-                <span className="pulse-dot h-1.5 w-1.5 rounded-full bg-tk-honey" />
-                <span className="mono uppercase tracking-[0.16em] text-tk-honey">
-                  Tracking
-                </span>
-                <span className="text-tk-ink-3">·</span>
-                <span className="text-tk-ink-2">{running.categoryName}</span>
-              </div>
-            </div>
-            <div className="mt-2 flex items-start justify-between gap-3">
-              <RunningBlockPrimaryClock
-                key={`${running.id}-${data.runningElapsedSeconds}`}
-                blockId={running.id}
-                startIso={running.startAt}
-                serverSeconds={data.runningElapsedSeconds}
-              />
-              <div className="shrink-0 self-end">
-                <Dialog.Root open={stopOpen} onOpenChange={setStopOpen}>
-                <Dialog.Trigger asChild>
-                  <button
-                    type="button"
-                    className="btn-stop flex h-10 items-center gap-2 px-4 text-[13px] font-semibold"
-                    onClick={() => {
-                      setStopLabel(running.label ?? "");
-                      setStopCat(running.categoryId);
-                      setStopQuality(
-                        (running.quality as Quality) || "useful",
-                      );
-                      setStopNotes("");
-                    }}
-                  >
-                    <Square size={12} fill="currentColor" /> Stop
-                  </button>
-                </Dialog.Trigger>
-                <Dialog.Portal>
-                  <Dialog.Overlay className="fixed inset-0 z-40 bg-black/70" />
-                  <Dialog.Content className="card fixed left-1/2 top-1/2 z-50 w-[min(100vw-2rem,380px)] -translate-x-1/2 -translate-y-1/2 p-5 shadow-xl">
-                    <Dialog.Title className="text-lg font-semibold text-tk-ink">
-                      Stop timer
-                    </Dialog.Title>
-                    <p className="mt-1 text-[13px] text-tk-ink-3">
-                      Required: label and quality.
-                    </p>
-                    <div className="mt-4 flex flex-col gap-3">
-                      <label className="text-[12px] text-tk-ink-2">
-                        Category
-                        <select
-                          className="mt-1 w-full rounded-xl border border-tk-line bg-tk-surface-2 px-3 py-2 text-tk-ink"
-                          value={stopCat}
-                          onChange={(e) => setStopCat(e.target.value)}
-                        >
-                          {catOptions(running?.categoryId).map((c) => (
-                            <option key={c.id} value={c.id}>
-                              {c.name}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="text-[12px] text-tk-ink-2">
-                        Label
-                        <input
-                          className="mt-1 w-full rounded-xl border border-tk-line bg-tk-surface-2 px-3 py-2 text-tk-ink"
-                          value={stopLabel}
-                          onChange={(e) => setStopLabel(e.target.value)}
-                          placeholder="What did you do?"
-                        />
-                      </label>
-                      <div>
-                        <div className="text-[12px] text-tk-ink-2">Quality</div>
-                        <div className="mt-1 flex gap-2">
-                          {(
-                            [
-                              ["useful", "Useful"],
-                              ["meh", "Meh"],
-                              ["wasted", "Wasted"],
-                            ] as const
-                          ).map(([v, lab]) => (
-                            <button
-                              key={v}
-                              type="button"
-                              className={`flex-1 rounded-xl border px-2 py-2 text-[12px] font-medium ${
-                                stopQuality === v
-                                  ? "border-tk-honey bg-tk-honey/15 text-tk-honey"
-                                  : "border-tk-line text-tk-ink-2"
-                              }`}
-                              onClick={() => setStopQuality(v)}
-                            >
-                              {lab}
-                            </button>
-                          ))}
-                        </div>
-                      </div>
-                      <label className="text-[12px] text-tk-ink-2">
-                        Notes (optional)
-                        <textarea
-                          className="mt-1 w-full rounded-xl border border-tk-line bg-tk-surface-2 px-3 py-2 text-tk-ink"
-                          rows={2}
-                          value={stopNotes}
-                          onChange={(e) => setStopNotes(e.target.value)}
-                        />
-                      </label>
-                    </div>
-                    <div className="mt-5 flex justify-end gap-2">
-                      <Dialog.Close asChild>
-                        <button type="button" className="btn-ghost px-4 py-2">
-                          Cancel
-                        </button>
-                      </Dialog.Close>
-                      <button
-                        type="button"
-                        className="btn-primary px-4 py-2"
-                        onClick={() => void onStopSubmit()}
-                      >
-                        Save
-                      </button>
-                    </div>
-                  </Dialog.Content>
-                </Dialog.Portal>
-              </Dialog.Root>
-              </div>
-            </div>
-            {running.label ? (
-              <div className="mt-2 truncate text-[12px] text-tk-ink-2">
-                {running.label}
-              </div>
-            ) : null}
-          </div>
-        </div>
-      ) : (
+      {!running ? (
+        <>
         <div className="card flex flex-col gap-3 p-4">
           <div className="eyebrow">Start tracking</div>
           <div>
@@ -549,7 +495,6 @@ export function TodayClient({ initial }: { initial: Initial }) {
             Start
           </button>
         </div>
-      )}
 
       <div className="flex items-center justify-between px-1">
         <div className="eyebrow">Today</div>
@@ -623,28 +568,11 @@ export function TodayClient({ initial }: { initial: Initial }) {
                   </label>
                   <div>
                     <div className="text-[12px] text-tk-ink-2">Quality</div>
-                    <div className="mt-1 flex gap-2">
-                      {(
-                        [
-                          ["useful", "Useful"],
-                          ["meh", "Meh"],
-                          ["wasted", "Wasted"],
-                        ] as const
-                      ).map(([v, lab]) => (
-                        <button
-                          key={v}
-                          type="button"
-                          className={`flex-1 rounded-xl border px-2 py-2 text-[12px] ${
-                            manualQuality === v
-                              ? "border-tk-honey bg-tk-honey/15 text-tk-honey"
-                              : "border-tk-line text-tk-ink-2"
-                          }`}
-                          onClick={() => setManualQuality(v)}
-                        >
-                          {lab}
-                        </button>
-                      ))}
-                    </div>
+                    <QualityPicker
+                      value={manualQuality}
+                      onChange={setManualQuality}
+                      buttonClassName="flex-1 rounded-xl border px-2 py-2 text-[12px]"
+                    />
                   </div>
                 </div>
                 <div className="mt-5 flex justify-end gap-2">
@@ -666,8 +594,18 @@ export function TodayClient({ initial }: { initial: Initial }) {
           </Dialog.Root>
         </div>
       </div>
+        </>
+      ) : null}
 
-      <div className="scroll-y flex max-h-[52vh] flex-col gap-2 overflow-y-auto pr-1">
+      {data.suspiciousLongRun ? (
+        <div className="chip-red text-[12px]">
+          Suspiciously long block — forget to stop?
+        </div>
+      ) : null}
+
+            <details className="group">
+        <summary className="cursor-pointer text-[12px] text-tk-ink-3">Today&apos;s log</summary>
+      <div className="scroll-y mt-2 flex max-h-[40vh] flex-col gap-2 overflow-y-auto pr-1">
         {data.blocks.length === 0 ? (
           <p className="px-1 py-6 text-center text-[13px] text-tk-ink-3">
             No blocks overlap today yet.
@@ -694,7 +632,7 @@ export function TodayClient({ initial }: { initial: Initial }) {
                 <div className="mt-1 text-[11px] text-tk-ink-3">
                   {b.categoryName} · {fmt(b.startAt, tz)}
                   {b.endAt ? ` → ${fmt(b.endAt, tz)}` : " · running"}
-                  {b.quality ? ` · ${b.quality}` : ""}
+                  {b.quality ? ` · ${qualityLabel(b.quality)}` : ""}
                 </div>
                 {b.credits != null ? (
                   <div
@@ -711,7 +649,12 @@ export function TodayClient({ initial }: { initial: Initial }) {
                     type="button"
                     className="rounded-lg p-2 text-tk-ink-3 hover:bg-tk-surface-2 hover:text-tk-ink"
                     aria-label="Edit"
-                    onClick={() => setEditRow({ ...b })}
+                    onClick={() =>
+                      setEditRow({
+                        ...b,
+                        quality: normalizeQuality(b.quality) ?? b.quality,
+                      })
+                    }
                   >
                     <Pencil size={16} />
                   </button>
@@ -729,6 +672,7 @@ export function TodayClient({ initial }: { initial: Initial }) {
           ))
         )}
       </div>
+      </details>
 
       <Dialog.Root open={!!editRow} onOpenChange={(o) => !o && setEditRow(null)}>
         <Dialog.Portal>
@@ -748,7 +692,18 @@ export function TodayClient({ initial }: { initial: Initial }) {
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>
+
+      {!extras.dayEnded && !extras.isOffDay ? (
+        <button
+          type="button"
+          className="btn-ghost w-full py-2 text-[12px] text-tk-ink-3"
+          onClick={() => void onMarkOffDay()}
+        >
+          Mark today as off day
+        </button>
+      ) : null}
     </div>
+    </>
   );
 }
 
@@ -837,22 +792,11 @@ function EditBlockForm({
       </label>
       <div>
         <div className="text-[12px] text-tk-ink-2">Quality</div>
-        <div className="mt-1 flex gap-2">
-          {(["useful", "meh", "wasted"] as const).map((v) => (
-            <button
-              key={v}
-              type="button"
-              className={`flex-1 rounded-xl border px-2 py-2 text-[12px] capitalize ${
-                row.quality === v
-                  ? "border-tk-honey bg-tk-honey/15 text-tk-honey"
-                  : "border-tk-line text-tk-ink-2"
-              }`}
-              onClick={() => onChange({ ...row, quality: v })}
-            >
-              {v}
-            </button>
-          ))}
-        </div>
+        <QualityPicker
+          value={normalizeQuality(row.quality) ?? "useful"}
+          onChange={(v) => onChange({ ...row, quality: v })}
+          buttonClassName="flex-1 rounded-xl border px-2 py-2 text-[12px]"
+        />
       </div>
       <div className="mt-4 flex justify-end gap-2">
         <Dialog.Close asChild>

@@ -7,11 +7,26 @@ import {
   createCategoryAction,
   updateCategoryAction,
 } from "@/actions/categories";
+import { upsertScheduleGoalAction } from "@/actions/schedule-goals";
 import { categories } from "@/db/schema";
 
 type Category = typeof categories.$inferSelect;
 
-export function CategoriesClient({ initial }: { initial: Category[] }) {
+type ScheduleGoal = {
+  id: string;
+  categoryId: string;
+  categoryName: string;
+  color: string;
+  targetMinutesPerDay: number;
+};
+
+export function CategoriesClient({
+  initial,
+  scheduleGoals,
+}: {
+  initial: Category[];
+  scheduleGoals: ScheduleGoal[];
+}) {
   const router = useRouter();
   const [name, setName] = useState("");
   const [rate, setRate] = useState("10");
@@ -87,6 +102,18 @@ export function CategoriesClient({ initial }: { initial: Category[] }) {
         </p>
       </div>
 
+      {scheduleGoals.length > 0 ? (
+        <section className="card flex flex-col gap-3 p-4">
+          <div className="eyebrow">Daily schedule goals (minutes)</div>
+          <p className="text-[12px] text-tk-ink-3">
+            Drives goal hit %, red-day signal, and End Day credits.
+          </p>
+          {scheduleGoals.map((g) => (
+            <ScheduleGoalRow key={g.id} goal={g} onSaved={refresh} />
+          ))}
+        </section>
+      ) : null}
+
       <form onSubmit={onCreate} className="card flex flex-col gap-3 p-4">
         <div className="eyebrow">New category</div>
         <input
@@ -144,6 +171,41 @@ export function CategoriesClient({ initial }: { initial: Category[] }) {
         ))}
       </div>
     </div>
+  );
+}
+
+function ScheduleGoalRow({
+  goal,
+  onSaved,
+}: {
+  goal: ScheduleGoal;
+  onSaved: () => Promise<void>;
+}) {
+  const [mins, setMins] = useState(String(goal.targetMinutesPerDay));
+  return (
+    <label className="flex items-center justify-between gap-3 text-[13px]">
+      <span className="flex items-center gap-2 text-tk-ink">
+        <span
+          className="h-2.5 w-2.5 rounded-full"
+          style={{ background: goal.color }}
+        />
+        {goal.categoryName}
+      </span>
+      <input
+        type="number"
+        min={0}
+        className="w-20 rounded-xl border border-tk-line bg-tk-surface-2 px-2 py-1 text-right text-tk-ink"
+        value={mins}
+        onChange={(e) => setMins(e.target.value)}
+        onBlur={async () => {
+          await upsertScheduleGoalAction({
+            categoryId: goal.categoryId,
+            targetMinutesPerDay: Number(mins) || 0,
+          });
+          await onSaved();
+        }}
+      />
+    </label>
   );
 }
 

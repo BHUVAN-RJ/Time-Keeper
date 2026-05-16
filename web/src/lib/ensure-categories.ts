@@ -2,14 +2,21 @@ import { and, count, eq } from "drizzle-orm";
 import { db } from "@/db";
 import { categories, timeBlocks } from "@/db/schema";
 import { DEFAULT_CATEGORIES } from "./default-categories";
+import { ensureDefaultScheduleGoals } from "./ensure-schedule-goals";
 
-export async function ensureDefaultCategories(userId: string): Promise<void> {
+export async function ensureDefaultCategories(
+  userId: string,
+  timezone = "America/Los_Angeles",
+): Promise<void> {
   const [row] = await db
     .select({ n: count() })
     .from(categories)
     .where(eq(categories.userId, userId));
 
-  if ((row?.n ?? 0) > 0) return;
+  if ((row?.n ?? 0) > 0) {
+    await ensureDefaultScheduleGoals(userId, timezone);
+    return;
+  }
 
   await db.insert(categories).values(
     DEFAULT_CATEGORIES.map((c) => ({
@@ -21,6 +28,7 @@ export async function ensureDefaultCategories(userId: string): Promise<void> {
       archived: false,
     })),
   );
+  await ensureDefaultScheduleGoals(userId, timezone);
 }
 
 export async function categoryBlockCount(

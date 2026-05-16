@@ -7,6 +7,9 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { calendarDayInTz } from "@/lib/calendar-day";
 import { ensureDefaultCategories } from "@/lib/ensure-categories";
+import { compareTasksForToday, syncTaskActualMinutes } from "@/lib/task-utils";
+import { parseQuickAdd } from "@/lib/quick-add-parse";
+import { computeDaySnapshot } from "@/lib/day-compute";
 
 export type TaskRow = typeof tasks.$inferSelect & {
   categoryName: string | null;
@@ -18,7 +21,7 @@ async function requireUser() {
   const id = session?.user?.id;
   if (!id) throw new Error("Unauthorized");
   const timezone = session.user.timezone ?? "America/Los_Angeles";
-  await ensureDefaultCategories(id);
+  await ensureDefaultCategories(id, timezone);
   return { userId: id, timezone };
 }
 
@@ -57,13 +60,15 @@ export async function getTasksPageData(): Promise<{
   const today = calendarDayInTz(new Date(), timezone);
   const all = await taskRowsForUser(userId);
 
-  const todayTasks = all.filter(
-    (t) =>
-      ACTIVE_STATUSES.includes(t.status as ActiveStatus) &&
-      (t.scheduledDate === today ||
-        t.dueDate === today ||
-        t.status === "in_progress"),
-  );
+  const todayTasks = all
+    .filter(
+      (t) =>
+        ACTIVE_STATUSES.includes(t.status as ActiveStatus) &&
+        (t.scheduledDate === today ||
+          t.dueDate === today ||
+          t.status === "in_progress"),
+    )
+    .sort(compareTasksForToday);
 
   const backlogTasks = all.filter(
     (t) =>
@@ -124,7 +129,10 @@ export async function createTaskAction(input: {
 }
 
 export async function completeTaskAction(taskId: string) {
-  const { userId } = await requireUser();
+  const { userId, timezone } = await requireUser();
+  const today = calendarDayInTz(new Date(), timezone);
+  const before = await computeDaySnapshot(userId, today, timezone);
+
   const [row] = await db
     .select()
     .from(tasks)
@@ -133,17 +141,51 @@ export async function completeTaskAction(taskId: string) {
   if (!row) throw new Error("Task not found");
   if (row.status === "completed" || row.status === "dropped") return;
 
+  const actual = await syncTaskActualMinutes(taskId, userId);
+
   await db
     .update(tasks)
     .set({
       status: "completed",
       completedAt: new Date(),
+      actualMinutes: actual,
       updatedAt: new Date(),
     })
     .where(and(eq(tasks.id, taskId), eq(tasks.userId, userId)));
 
   revalidatePath("/tasks");
   revalidatePath("/today");
+  revalidatePath("/stats");
+
+  const after = await computeDaySnapshot(userId, today, timezone);
+  const scoreDelta = after.productivityScore - before.productivityScore;
+
+  const delta =
+    row.estimateMinutes > 0
+      ? Math.round(((actual - row.estimateMinutes) / row.estimateMinutes) * 100)
+      : 0;
+  return {
+    estimateMinutes: row.estimateMinutes,
+    actualMinutes: actual,
+    deltaPercent: delta,
+    scoreDelta,
+    scoreAfter: after.productivityScore,
+    showScoreToast: scoreDelta >= 3,
+  };
+}
+
+export async function createTaskFromQuickAddAction(raw: string) {
+  const parsed = parseQuickAdd(raw);
+  const { timezone } = await requireUser();
+  const today = calendarDayInTz(new Date(), timezone);
+  await createTaskAction({
+    title: parsed.title,
+    estimateMinutes: parsed.estimateMinutes,
+    dueDate: parsed.dueDate,
+    scheduledDate: parsed.dueDate === today ? today : null,
+    urgency: parsed.urgency,
+    importance: parsed.importance,
+  });
 }
 
 export async function dropTaskAction(taskId: string, reason: string) {

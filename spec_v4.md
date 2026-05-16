@@ -32,7 +32,7 @@ A productivity app does not fix ADHD. It supports an already-functional system. 
 ## 3. Non-goals (v1)
 
 - Multi-user team features, billing.
-- Google Calendar integration (deferred to v2+).
+- Full Google Calendar sync (read/write, multi-account) — deferred to v1.0+; **read-only calendar context for Weekly Rundown** ships with v0.2 (see §6.17).
 - iOS push notifications (Apple's PWA push is unreliable; in-app banners only).
 - Native iOS/Android apps.
 - Idle auto-stop on tracked time.
@@ -101,7 +101,7 @@ Seeded on signup:
 **`time_blocks`**
 - `id`, `user_id`, `category_id`
 - `start_at`, `end_at` (nullable while running)
-- `label`, `quality` (useful | meh | wasted | null)
+- `label`, `quality` (useful | chores | meh | wasted | null)
 - `notes`, `manual_entry` (bool)
 - `task_id` (nullable fk), `habit_completion_id` (nullable fk), `project_id` (nullable fk)
 - `random_bonus_applied` (bool, default false)
@@ -271,7 +271,7 @@ User chooses in settings: overwork goes to credits, to bank, or split (default 5
 ```
 duration_hours = (end_at - start_at) / 3600
 base = duration_hours × category.base_credit_rate
-quality_mult = { useful: 1.0, meh: 0.5, wasted: 0.0 }[quality]
+quality_mult = { useful: 1.0, chores: 0.5, meh: 0.5, wasted: 0.0 }[quality]
 block_credits = base × quality_mult
 ```
 
@@ -316,7 +316,7 @@ productivity_score = round(sum)
 
 Where:
 - `task_completion_score` = (completed today / scheduled today) × 100. If nothing scheduled, 100.
-- `quality_score` = (useful_minutes / (useful + meh + wasted)) × 100.
+- `quality_score` = (useful_minutes / (useful + chores + meh + wasted)) × 100. **Chores** = daily upkeep (cook, clean, laundry, bath). **Meh** = low-focus time at half credit.
 
 **Display:**
 - Single number on dashboard.
@@ -445,6 +445,32 @@ Triggered on first app open after a day where `ended_at` was set.
 - Didn't End Day yesterday: AM rundown shows "Yesterday wasn't closed. Close it now?" Forces a quick close-out.
 - Multiple unclosed days: summary of all, batch-close option.
 
+### 6.17 Weekly Rundown *(v0.2+, Google Calendar read in same phase)*
+
+A dedicated **Week** screen section (or sub-view) that helps you close the current week and prep the next — distinct from the Sunday **Weekly Retrospective** (§6.13), which is reflective; this is operational.
+
+**Part A — This week (current ISO week, Mon–Sun):**
+- Per-day summary: goal-hit %, productivity score, red/off-day flags, End Day closed or not.
+- Week average score (excluding off days and vacations from averages, per §6.6).
+- Total tracked time by category vs schedule goals.
+- Off days marked this week, with **revert** (“Not an off day”) per day.
+- Open tasks still scheduled this week (not completed / not dropped).
+
+**Part B — Next week prep (upcoming Mon–Sun):**
+- **Internal tasks:** everything with `scheduled_date` or `due_date` in next week, Eisenhower-sorted, with estimates summed → “You’ve planned ~Xh” vs daily work goal.
+- **Google Calendar (read-only, v0.2):** after OAuth connect in Settings, pull events for next week from one or more selected calendars. Show as a read-only agenda alongside internal tasks (no auto time-block creation in v0.2). User can mentally map “meetings + deep work blocks” before the week starts.
+- Optional quick actions: reschedule a task to a day next week, mark a day as tentative off day (does not spend off-day bank until confirmed).
+
+**When to show:** always available from Week tab; optional banner Sunday evening / Monday AM: “Review this week & prep next.”
+
+**Google Calendar scope in v0.2:**
+- OAuth 2.0, store refresh token encrypted per user.
+- Read events in date range only; no write-back.
+- Settings: pick calendars to include, default visibility on/off for Weekly Rundown.
+- **Not in v0.2:** creating events from Time Keeper, multi-write sync, conflict resolution, idle detection from calendar.
+
+**v1.0+** expands to multi-account, optional write-back (“block focus time on calendar”), and smarter merge with `time_blocks`.
+
 ### 6.13 Weekly Retrospective (Sunday) *(v0.3+)*
 
 Triggered Sunday evening or first open Monday.
@@ -510,7 +536,7 @@ On any task: "Drop" button with required `drop_reason` (1-sentence text). On any
 
 **Today:** running stats + block list.
 
-**Week:** 7-day heatmap, goal-hit per day, credits, mood trend.
+**Week:** 7-day summary (goal-hit, score, off days with revert), week average; **Weekly Rundown** (§6.17) for current week + next-week prep (internal tasks + Google Calendar read).
 
 **Month:** calendar with score-colored dots, time per category, tag breakdown, quality distribution, score trend line.
 
@@ -622,7 +648,8 @@ The following are **implemented** in the Next.js app under `web/`: Resend magic 
 - Schedule goals per category
 - Day status calculation + red-day logic
 - **Rolling 7-day average as primary dashboard metric**
-- Weekly view
+- Weekly view + **Weekly Rundown** (this week recap + next week prep; §6.17)
+- **Google Calendar read-only** for next-week agenda in Weekly Rundown (OAuth in Settings)
 - Tasks: create with required estimate, list (Today + Backlog), complete, link to time blocks
 - Task estimate-vs-actual on completion
 - Free-time category spending (display)
@@ -680,7 +707,7 @@ The following are **implemented** in the Next.js app under `web/`: Resend magic 
 - Performance pass: indexes, query optimization
 
 ### v1.0+ — Future (not committed)
-- Google Calendar multi-account integration
+- Google Calendar **full** integration (multi-account, optional write-back, focus-block export)
 - Web push notifications (desktop)
 - Smart suggestions ("you usually do deep work in mornings")
 - AI-generated weekly summary

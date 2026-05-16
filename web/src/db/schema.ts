@@ -157,6 +157,27 @@ export const scheduleGoals = sqliteTable("schedule_goals", {
     .$defaultFn(() => new Date()),
 });
 
+export const dailyReviews = sqliteTable(
+  "daily_reviews",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    date: text("date").notNull(),
+    pmCompletedAt: integer("pm_completed_at", { mode: "timestamp_ms" }),
+    mood: integer("mood"),
+    notes: text("notes"),
+    tomorrowsPlanJson: text("tomorrows_plan_json"),
+    amSeenAt: integer("am_seen_at", { mode: "timestamp_ms" }),
+  },
+  (t) => ({
+    userDateUnique: uniqueIndex("daily_reviews_user_date").on(t.userId, t.date),
+  }),
+);
+
 export const dayStatus = sqliteTable(
   "day_status",
   {
@@ -199,7 +220,7 @@ export const timeBlocks = sqliteTable(
     startAt: integer("start_at", { mode: "timestamp_ms" }).notNull(),
     endAt: integer("end_at", { mode: "timestamp_ms" }),
     label: text("label"),
-    quality: text("quality"), // useful | meh | wasted | null while running
+    quality: text("quality"), // useful | chores | meh | wasted | null while running
     notes: text("notes"),
     manualEntry: integer("manual_entry", { mode: "boolean" }).notNull().default(false),
     taskId: text("task_id").references(() => tasks.id, { onDelete: "set null" }),
@@ -230,7 +251,12 @@ export const usersRelations = relations(users, ({ many }) => ({
   tasks: many(tasks),
   scheduleGoals: many(scheduleGoals),
   dayStatuses: many(dayStatus),
+  dailyReviews: many(dailyReviews),
   timeBlocks: many(timeBlocks),
+}));
+
+export const dailyReviewsRelations = relations(dailyReviews, ({ one }) => ({
+  user: one(users, { fields: [dailyReviews.userId], references: [users.id] }),
 }));
 
 export const tasksRelations = relations(tasks, ({ one, many }) => ({

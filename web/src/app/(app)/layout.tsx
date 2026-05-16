@@ -2,6 +2,7 @@ import { auth } from "@/auth";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { signOutAction } from "@/actions/auth";
+import { QuickAddProvider } from "@/components/quick-add-provider";
 
 export default async function AppChromeLayout({
   children,
@@ -31,6 +32,12 @@ export default async function AppChromeLayout({
               Today
             </Link>
             <Link
+              href="/week"
+              className="rounded-lg px-3 py-2 text-tk-ink-2 hover:bg-tk-surface hover:text-tk-ink"
+            >
+              Week
+            </Link>
+            <Link
               href="/tasks"
               className="rounded-lg px-3 py-2 text-tk-ink-2 hover:bg-tk-surface hover:text-tk-ink"
             >
@@ -41,6 +48,18 @@ export default async function AppChromeLayout({
               className="rounded-lg px-3 py-2 text-tk-ink-2 hover:bg-tk-surface hover:text-tk-ink"
             >
               Categories
+            </Link>
+            <Link
+              href="/stats"
+              className="rounded-lg px-3 py-2 text-tk-ink-2 hover:bg-tk-surface hover:text-tk-ink"
+            >
+              Stats
+            </Link>
+            <Link
+              href="/settings"
+              className="rounded-lg px-3 py-2 text-tk-ink-2 hover:bg-tk-surface hover:text-tk-ink"
+            >
+              Settings
             </Link>
             <form action={signOutAction}>
               <button
@@ -53,9 +72,11 @@ export default async function AppChromeLayout({
           </nav>
         </div>
       </header>
-      <main className="mx-auto flex w-full max-w-lg flex-1 flex-col px-4 pb-28 pt-2">
-        {children}
-      </main>
+      <QuickAddProvider>
+        <main className="mx-auto flex w-full max-w-lg flex-1 flex-col px-4 pb-28 pt-2">
+          {children}
+        </main>
+      </QuickAddProvider>
     </div>
   );
 }
