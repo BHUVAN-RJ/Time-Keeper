@@ -31,6 +31,12 @@ export default async function AppChromeLayout({
               Today
             </Link>
             <Link
+              href="/tasks"
+              className="rounded-lg px-3 py-2 text-tk-ink-2 hover:bg-tk-surface hover:text-tk-ink"
+            >
+              Tasks
+            </Link>
+            <Link
               href="/categories"
               className="rounded-lg px-3 py-2 text-tk-ink-2 hover:bg-tk-surface hover:text-tk-ink"
             >
