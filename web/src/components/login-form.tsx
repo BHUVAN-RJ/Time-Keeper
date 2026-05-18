@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { toast } from "sonner";
 import { requestMagicLinkAction } from "@/actions/auth";
@@ -102,6 +103,15 @@ export function LoginForm({ resendTestMode }: { resendTestMode: boolean }) {
             </button>
           </form>
         )}
+        <p className="mt-10 text-center text-[12px] text-tk-ink-4">
+          <Link href="/privacy" className="hover:text-tk-ink-3">
+            Privacy
+          </Link>
+          <span className="mx-2">·</span>
+          <Link href="/terms" className="hover:text-tk-ink-3">
+            Terms
+          </Link>
+        </p>
       </div>
     </div>
   );

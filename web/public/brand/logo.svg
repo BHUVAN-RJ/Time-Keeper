@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="Time Keeper">
+  <rect width="512" height="512" fill="#0a0908"/>
+  <text
+    x="256"
+    y="300"
+    text-anchor="middle"
+    fill="#f0b429"
+    font-size="200"
+    font-weight="700"
+    font-family="system-ui, -apple-system, Segoe UI, sans-serif"
+  >TK</text>
+</svg>
