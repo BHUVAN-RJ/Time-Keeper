@@ -1,3 +1,4 @@
+import { EmailSignInError } from "@auth/core/errors";
 import NextAuth from "next-auth";
 import Resend from "next-auth/providers/resend";
 import { DrizzleAdapter } from "@auth/drizzle-adapter";
@@ -24,6 +25,31 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     Resend({
       apiKey: process.env.RESEND_API_KEY,
       from: process.env.AUTH_RESEND_FROM ?? "onboarding@resend.dev",
+      async sendVerificationRequest({ identifier: to, provider, url }) {
+        const { host } = new URL(url);
+        const res = await fetch("https://api.resend.com/emails", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${provider.apiKey}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            from: provider.from,
+            to,
+            subject: `Sign in to ${host}`,
+            html: `<p>Sign in to <strong>${host}</strong></p><p><a href="${url}">Sign in</a></p><p>If you did not request this, you can ignore this email.</p>`,
+            text: `Sign in to ${host}\n\n${url}\n`,
+          }),
+        });
+        if (!res.ok) {
+          const body = (await res.json().catch(() => ({}))) as {
+            message?: string;
+          };
+          const detail = body.message ?? "Resend request failed";
+          console.error("[auth] Resend send failed:", body);
+          throw new EmailSignInError(detail);
+        }
+      },
     }),
   ],
   session: {

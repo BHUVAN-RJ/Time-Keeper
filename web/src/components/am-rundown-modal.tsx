@@ -1,94 +1,342 @@
 "use client";
 
-import * as Dialog from "@radix-ui/react-dialog";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
-import type { getAmRundownData } from "@/actions/am-rundown";
-import { dismissAmRundownAction } from "@/actions/am-rundown";
+import { useMemo, useState } from "react";
+import { toast } from "sonner";
+import {
+  batchCloseUnclosedDaysAction,
+  dismissAmRundownAction,
+  getAmRundownData,
+} from "@/actions/am-rundown";
+import { EndDayDialog } from "@/components/end-day-dialog";
+import { RitualModal } from "@/components/ritual-modal";
 
 type Data = Awaited<ReturnType<typeof getAmRundownData>>;
 
-export function AmRundownModal({ data }: { data: Data }) {
+export function AmRundownModal({
+  data,
+  runningBlockId,
+  onNeedStop,
+}: {
+  data: Data;
+  runningBlockId: string | null;
+  onNeedStop: () => void;
+}) {
   const router = useRouter();
-  const [open, setOpen] = useState(data.show);
+  const [openOverride, setOpenOverride] = useState<boolean | null>(null);
   const [pending, setPending] = useState(false);
+  const [batchPending, setBatchPending] = useState(false);
+  const [closeCatchUpOpen, setCloseCatchUpOpen] = useState(false);
+  const [modeOverride, setModeOverride] = useState<Data["mode"] | null>(null);
 
-  if (!data.show) return null;
+  const effectiveMode =
+    data.mode !== "unclosed" ? data.mode : (modeOverride ?? data.mode);
 
-  async function onDismiss() {
+  const [prevEffectiveMode, setPrevEffectiveMode] = useState(effectiveMode);
+  if (effectiveMode !== prevEffectiveMode) {
+    setPrevEffectiveMode(effectiveMode);
+    setOpenOverride(null);
+  }
+
+  const open = openOverride ?? effectiveMode !== "hidden";
+
+  const displayData = useMemo(
+    () => (modeOverride ? { ...data, mode: modeOverride } : data),
+    [data, modeOverride],
+  );
+
+  if (effectiveMode === "hidden") return null;
+
+  async function onStartDay() {
     setPending(true);
     try {
       await dismissAmRundownAction();
-      setOpen(false);
+      setOpenOverride(false);
       router.refresh();
     } finally {
       setPending(false);
     }
   }
 
+  async function onCatchUpClosed() {
+    setCloseCatchUpOpen(false);
+    const fresh = await getAmRundownData();
+    if (fresh.mode === "unclosed") {
+      toast.error("Day did not save — try closing again.");
+      setModeOverride(null);
+      setOpenOverride(true);
+      router.refresh();
+      return;
+    }
+    setModeOverride(fresh.mode);
+    setOpenOverride(fresh.mode !== "hidden");
+    router.refresh();
+  }
+
+  async function onBatchClose() {
+    const n = data.unclosedDays.length;
+    if (
+      n > 1 &&
+      !confirm(
+        `Close ${n} days in order (oldest first)? Incomplete tasks move to the next day.`,
+      )
+    ) {
+      return;
+    }
+    setBatchPending(true);
+    try {
+      const res = await batchCloseUnclosedDaysAction();
+      toast.success(
+        res.closed === 0
+          ? "No days left to close"
+          : `Closed ${res.closed} day${res.closed === 1 ? "" : "s"}`,
+      );
+      const fresh = await getAmRundownData();
+      setModeOverride(fresh.mode);
+      setOpenOverride(fresh.mode !== "hidden");
+      router.refresh();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Batch close failed");
+    } finally {
+      setBatchPending(false);
+    }
+  }
+
+  const unclosedCount = data.unclosedDays.length;
+  const title =
+    effectiveMode === "unclosed"
+      ? unclosedCount === 1
+        ? "A day wasn't closed"
+        : `${unclosedCount} days weren't closed`
+      : "Good morning";
+  const description = data.today;
+
   return (
-    <Dialog.Root open={open} onOpenChange={setOpen}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/75" />
-        <Dialog.Content className="card fixed left-1/2 top-[12%] z-50 w-[min(100vw-2rem,400px)] -translate-x-1/2 p-6">
-          <Dialog.Title className="text-lg font-semibold text-tk-ink">
-            Good morning
-          </Dialog.Title>
-          {data.rollingAvg != null ? (
-            <p className="mt-4 text-[14px] text-tk-ink-2">
-              Your recent baseline:{" "}
-              <span className="mono font-semibold text-tk-honey">
-                {data.rollingAvg}
-              </span>
-            </p>
-          ) : null}
-          {data.yesterdayScore != null ? (
-            <p className="mt-2 text-[13px] text-tk-ink-3">
-              Yesterday: {data.yesterdayScore}
-              {data.yesterdayHabitsLine
-                ? `, ${data.yesterdayHabitsLine}`
-                : ""}
-            </p>
-          ) : null}
-          {data.calendarMeta.connected &&
-          (data.calendarToday.length > 0 || data.calendarTomorrow.length > 0) ? (
-            <div className="mt-4 text-left">
-              <p className="text-[11px] font-medium uppercase tracking-wide text-tk-ink-3">
-                Calendar
-              </p>
-              {data.calendarToday.length > 0 ? (
-                <ul className="mt-2 flex flex-col gap-1 text-[12px] text-tk-ink-2">
-                  {data.calendarToday.map((ev) => (
-                    <li key={ev.id}>
-                      Today: <span className="text-tk-ink">{ev.title}</span>
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-              {data.calendarTomorrow.length > 0 ? (
-                <ul className="mt-2 flex flex-col gap-1 text-[12px] text-tk-ink-3">
-                  {data.calendarTomorrow.map((ev) => (
-                    <li key={ev.id}>
-                      Tomorrow: <span className="text-tk-ink">{ev.title}</span>
-                    </li>
-                  ))}
-                </ul>
+    <>
+      <RitualModal
+        open={open && !closeCatchUpOpen}
+        onOpenChange={(next) => {
+          if (effectiveMode === "unclosed") return;
+          setOpenOverride(next);
+        }}
+        title={title}
+        description={description}
+        dismissible={effectiveMode !== "unclosed"}
+        footer={
+          effectiveMode === "rundown" ? (
+            <button
+              type="button"
+              className="btn-primary w-full py-3"
+              disabled={pending}
+              onClick={() => void onStartDay()}
+            >
+              Start the day
+            </button>
+          ) : effectiveMode === "unclosed" ? (
+            <div className="flex flex-col gap-2">
+              <button
+                type="button"
+                className="btn-primary w-full py-3"
+                onClick={() => setCloseCatchUpOpen(true)}
+              >
+                Close {data.closeTarget} now
+              </button>
+              {unclosedCount > 1 ? (
+                <button
+                  type="button"
+                  className="btn-ghost w-full py-2 text-[13px]"
+                  disabled={batchPending}
+                  onClick={() => void onBatchClose()}
+                >
+                  {batchPending
+                    ? "Closing…"
+                    : `Close all ${unclosedCount} days (oldest first)`}
+                </button>
               ) : null}
             </div>
-          ) : null}
-          <p className="mt-4 text-[12px] text-tk-ink-4">
-            Today&apos;s score stays hidden until you close the day.
+          ) : undefined
+        }
+      >
+        {effectiveMode === "unclosed" ? (
+          <div className="flex flex-col gap-3 text-[14px] leading-relaxed text-tk-ink-2">
+            <p>
+              Close unclosed days before starting today so scores and habits stay
+              accurate.
+            </p>
+            <ul className="flex flex-col gap-1 rounded-lg border border-tk-line bg-tk-surface-2 p-3 text-[13px]">
+              {data.unclosedDays.map((d) => (
+                <li key={d} className="flex justify-between gap-2">
+                  <span className="font-medium text-tk-ink">{d}</span>
+                  {d === data.closeTarget ? (
+                    <span className="text-[11px] text-tk-honey">next</span>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : (
+          <RundownBody data={displayData} />
+        )}
+      </RitualModal>
+
+      <EndDayDialog
+        open={closeCatchUpOpen}
+        onOpenChange={setCloseCatchUpOpen}
+        runningBlockId={runningBlockId}
+        onNeedStop={onNeedStop}
+        closeDate={data.closeTarget}
+        title={data.closeTarget === data.yesterday ? "Close yesterday" : "Close day"}
+        onSuccess={onCatchUpClosed}
+      />
+    </>
+  );
+}
+
+function RundownBody({ data }: { data: Data }) {
+  return (
+    <div className="flex flex-col gap-5">
+      {data.rollingAvg != null ? (
+        <section>
+          <div className="eyebrow">Your baseline</div>
+          <p className="mt-1 text-[14px] text-tk-ink-2">
+            Recent 7-day avg:{" "}
+            <span className="mono font-semibold text-tk-honey">
+              {data.rollingAvg}
+            </span>
           </p>
-          <button
-            type="button"
-            className="btn-primary mt-6 w-full py-3"
-            disabled={pending}
-            onClick={() => void onDismiss()}
-          >
-            Start the day
-          </button>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+        </section>
+      ) : null}
+
+      {(data.yesterdayScore != null || data.yesterdayCredits) && (
+        <section>
+          <div className="eyebrow">Yesterday</div>
+          <p className="mt-1 text-[13px] text-tk-ink-2">
+            {data.yesterdayScore != null ? (
+              <>
+                Score{" "}
+                <span className="mono font-medium text-tk-ink">
+                  {data.yesterdayScore}
+                </span>
+              </>
+            ) : null}
+            {data.yesterdayCredits ? (
+              <>
+                {data.yesterdayScore != null ? " · " : null}
+                Credits {data.yesterdayCredits}
+              </>
+            ) : null}
+          </p>
+          {data.yesterdayHabits.length > 0 ? (
+            <ul className="mt-2 flex flex-col gap-0.5 text-[12px]">
+              {data.yesterdayHabits.map((h) => (
+                <li
+                  key={h.id}
+                  className={h.hit ? "text-tk-green" : "text-tk-red/90"}
+                >
+                  {h.offDaySkipped ? "☁ " : h.hit ? "✓ " : "○ "}
+                  {h.name} ({h.count}/{h.targetPerDay}
+                  {h.freezeUsed ? " ❄" : ""})
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </section>
+      )}
+
+      {data.pinnedTop3.length > 0 ? (
+        <section>
+          <div className="eyebrow">Today&apos;s top 3</div>
+          <ol className="mt-2 list-decimal pl-5 text-[13px] text-tk-ink">
+            {data.pinnedTop3.map((t) => (
+              <li key={t.id}>{t.title}</li>
+            ))}
+          </ol>
+        </section>
+      ) : null}
+
+      {data.scheduledToday.length > 0 ? (
+        <section>
+          <div className="eyebrow">Scheduled today</div>
+          <ul className="mt-2 flex flex-col gap-1 text-[12px] text-tk-ink-2">
+            {data.scheduledToday.slice(0, 8).map((t) => (
+              <li key={t.id}>{t.title}</li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      {data.dueToday.length > 0 ? (
+        <section>
+          <div className="eyebrow">Due today</div>
+          <ul className="mt-2 flex flex-col gap-1 text-[12px] text-tk-ink-2">
+            {data.dueToday.slice(0, 8).map((t) => (
+              <li key={t.id}>{t.title}</li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      {data.remindersToday.length > 0 ? (
+        <section>
+          <div className="eyebrow">Reminders today</div>
+          <ul className="mt-2 flex flex-col gap-1 text-[12px] text-tk-ink-2">
+            {data.remindersToday.map((r) => (
+              <li key={r.id}>
+                {r.title}{" "}
+                <span className="text-tk-ink-4">({r.when})</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      {data.todayHabits.length > 0 ? (
+        <section>
+          <div className="eyebrow">Habits</div>
+          {data.todayIsOffDay ? (
+            <p className="mt-1 text-[12px] text-tk-ink-3">
+              Off day — habits paused (no ❄ used)
+            </p>
+          ) : null}
+          <ul className="mt-2 flex flex-col gap-1 text-[12px] text-tk-ink-2">
+            {data.todayHabits.map((h) => (
+              <li key={h.id}>
+                {h.name}{" "}
+                <span className="text-tk-ink-4">
+                  {h.offDayPaused
+                    ? "(rest day)"
+                    : `(${h.todayCount}/${h.targetPerDay})`}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      {data.calendarMeta.connected &&
+      (data.calendarToday.length > 0 || data.calendarTomorrow.length > 0) ? (
+        <section>
+          <div className="eyebrow">Calendar</div>
+          {data.calendarToday.length > 0 ? (
+            <ul className="mt-2 flex flex-col gap-1 text-[12px] text-tk-ink-2">
+              {data.calendarToday.map((ev) => (
+                <li key={ev.id}>
+                  Today: <span className="text-tk-ink">{ev.title}</span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {data.calendarTomorrow.length > 0 ? (
+            <ul className="mt-2 flex flex-col gap-1 text-[12px] text-tk-ink-3">
+              {data.calendarTomorrow.map((ev) => (
+                <li key={ev.id}>
+                  Tomorrow: <span className="text-tk-ink">{ev.title}</span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+        </section>
+      ) : null}
+    </div>
   );
 }

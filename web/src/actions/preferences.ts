@@ -1,0 +1,178 @@
+"use server";
+
+import { auth } from "@/auth";
+import { db } from "@/db";
+import { userPreferences } from "@/db/schema";
+import { eq } from "drizzle-orm";
+import { revalidatePath } from "next/cache";
+import {
+  FREEZE_MINUTES_PER_CREDIT,
+  getOverworkBank,
+  getOverworkCreditsPercent,
+} from "@/lib/overwork";
+
+export async function getOverworkSettings() {
+  const session = await auth();
+  const id = session?.user?.id;
+  if (!id) throw new Error("Unauthorized");
+  const [creditsPercent, bank] = await Promise.all([
+    getOverworkCreditsPercent(id),
+    getOverworkBank(id),
+  ]);
+  return {
+    creditsPercent,
+    unbankedMinutes: bank.unbankedMinutes,
+    bankedFreezeCredits: bank.bankedFreezeCredits,
+    freezeMinutesPerCredit: FREEZE_MINUTES_PER_CREDIT,
+  };
+}
+
+export async function getOverworkSplitPercent(): Promise<number> {
+  const session = await auth();
+  const id = session?.user?.id;
+  if (!id) return 50;
+  const [row] = await db
+    .select({ pct: userPreferences.overworkCreditsPercent })
+    .from(userPreferences)
+    .where(eq(userPreferences.userId, id))
+    .limit(1);
+  return row?.pct ?? 50;
+}
+
+export type BodyDoublingInterval = 0 | 30 | 60 | 90;
+
+export async function getBodyDoublingSettings() {
+  const session = await auth();
+  const id = session?.user?.id;
+  if (!id) throw new Error("Unauthorized");
+  const [row] = await db
+    .select({
+      minutes: userPreferences.bodyDoublingIntervalMinutes,
+    })
+    .from(userPreferences)
+    .where(eq(userPreferences.userId, id))
+    .limit(1);
+  const m = row?.minutes ?? 0;
+  const interval: BodyDoublingInterval =
+    m === 30 || m === 60 || m === 90 ? m : 0;
+  return { intervalMinutes: interval };
+}
+
+export async function setBodyDoublingInterval(minutes: BodyDoublingInterval) {
+  const session = await auth();
+  const id = session?.user?.id;
+  if (!id) throw new Error("Unauthorized");
+  const allowed: BodyDoublingInterval[] = [0, 30, 60, 90];
+  if (!allowed.includes(minutes)) throw new Error("Invalid interval");
+  const now = new Date();
+  await db
+    .insert(userPreferences)
+    .values({
+      userId: id,
+      bodyDoublingIntervalMinutes: minutes,
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: userPreferences.userId,
+      set: { bodyDoublingIntervalMinutes: minutes, updatedAt: now },
+    });
+  revalidatePath("/settings");
+  revalidatePath("/today");
+}
+
+export async function getTagsSettings() {
+  const session = await auth();
+  const id = session?.user?.id;
+  if (!id) throw new Error("Unauthorized");
+  return { enabled: await getTagsEnabledForUser(id) };
+}
+
+export async function getTagsEnabledForUser(userId: string): Promise<boolean> {
+  const [row] = await db
+    .select({ enabled: userPreferences.tagsEnabled })
+    .from(userPreferences)
+    .where(eq(userPreferences.userId, userId))
+    .limit(1);
+  return row?.enabled ?? true;
+}
+
+export async function getRemindersSettings() {
+  const session = await auth();
+  const id = session?.user?.id;
+  if (!id) throw new Error("Unauthorized");
+  return { enabled: await getRemindersEnabledForUser(id) };
+}
+
+export async function getRemindersEnabledForUser(
+  userId: string,
+): Promise<boolean> {
+  const [row] = await db
+    .select({ enabled: userPreferences.remindersEnabled })
+    .from(userPreferences)
+    .where(eq(userPreferences.userId, userId))
+    .limit(1);
+  return row?.enabled ?? false;
+}
+
+export async function setRemindersEnabled(enabled: boolean) {
+  const session = await auth();
+  const id = session?.user?.id;
+  if (!id) throw new Error("Unauthorized");
+  const now = new Date();
+  await db
+    .insert(userPreferences)
+    .values({
+      userId: id,
+      remindersEnabled: enabled,
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: userPreferences.userId,
+      set: { remindersEnabled: enabled, updatedAt: now },
+    });
+  revalidatePath("/settings");
+  revalidatePath("/today");
+  revalidatePath("/week");
+}
+
+export async function setTagsEnabled(enabled: boolean) {
+  const session = await auth();
+  const id = session?.user?.id;
+  if (!id) throw new Error("Unauthorized");
+  const now = new Date();
+  await db
+    .insert(userPreferences)
+    .values({
+      userId: id,
+      tagsEnabled: enabled,
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: userPreferences.userId,
+      set: { tagsEnabled: enabled, updatedAt: now },
+    });
+  revalidatePath("/settings");
+  revalidatePath("/today");
+  revalidatePath("/tasks");
+  revalidatePath("/month");
+}
+
+export async function setOverworkSplitPercent(percent: number) {
+  const session = await auth();
+  const id = session?.user?.id;
+  if (!id) throw new Error("Unauthorized");
+  const pct = Math.min(100, Math.max(0, Math.round(percent)));
+  const now = new Date();
+  await db
+    .insert(userPreferences)
+    .values({
+      userId: id,
+      overworkCreditsPercent: pct,
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: userPreferences.userId,
+      set: { overworkCreditsPercent: pct, updatedAt: now },
+    });
+  revalidatePath("/settings");
+}

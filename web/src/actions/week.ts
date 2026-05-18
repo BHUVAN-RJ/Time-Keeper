@@ -5,6 +5,8 @@ import { auth } from "@/auth";
 import { db } from "@/db";
 import { tasks } from "@/db/schema";
 import { computeWeekSnapshots } from "@/lib/day-compute";
+import { compareTasksForToday } from "@/lib/eisenhower";
+import { aggregateWeekCategoryGoals } from "@/lib/week-category-goals";
 import { calendarDayInTz } from "@/lib/calendar-day";
 import { ensureDefaultCategories } from "@/lib/ensure-categories";
 import { fetchCalendarEventsForRange } from "@/lib/google-calendar/service";
@@ -24,13 +26,18 @@ async function requireUser() {
 
 const ACTIVE = ["backlog", "scheduled", "in_progress"] as const;
 
-export type NextWeekTaskRow = {
+export type WeekTaskRow = {
   id: string;
   title: string;
   estimateMinutes: number;
   dueDate: string | null;
   scheduledDate: string | null;
+  urgency: number;
+  importance: number;
+  sortOrder: number;
 };
+
+export type NextWeekTaskRow = WeekTaskRow;
 
 export async function getWeekData(weekStart?: string) {
   const { userId, timezone } = await requireUser();
@@ -60,34 +67,64 @@ export async function getWeekData(weekStart?: string) {
         )
       : null;
 
+  const thisWeekDates = Array.from({ length: 7 }, (_, i) =>
+    format(addDays(parseISO(monday), i), "yyyy-MM-dd"),
+  );
   const nextWeekDates = Array.from({ length: 7 }, (_, i) =>
     format(addDays(parseISO(nextMonday), i), "yyyy-MM-dd"),
   );
 
-  const taskRows = await db
-    .select({ task: tasks })
-    .from(tasks)
-    .where(
-      and(
-        eq(tasks.userId, userId),
-        inArray(tasks.status, [...ACTIVE]),
-        or(
-          inArray(tasks.scheduledDate, nextWeekDates),
-          inArray(tasks.dueDate, nextWeekDates),
+  const [thisWeekRows, nextWeekRows] = await Promise.all([
+    db
+      .select({ task: tasks })
+      .from(tasks)
+      .where(
+        and(
+          eq(tasks.userId, userId),
+          inArray(tasks.status, [...ACTIVE]),
+          or(
+            inArray(tasks.scheduledDate, thisWeekDates),
+            inArray(tasks.dueDate, thisWeekDates),
+          ),
         ),
       ),
-    );
+    db
+      .select({ task: tasks })
+      .from(tasks)
+      .where(
+        and(
+          eq(tasks.userId, userId),
+          inArray(tasks.status, [...ACTIVE]),
+          or(
+            inArray(tasks.scheduledDate, nextWeekDates),
+            inArray(tasks.dueDate, nextWeekDates),
+          ),
+        ),
+      ),
+  ]);
 
-  const nextWeekTasks: NextWeekTaskRow[] = taskRows
-    .map((r) => r.task)
-    .map((t) => ({
+  function mapTaskRow(t: (typeof thisWeekRows)[0]["task"]): WeekTaskRow {
+    return {
       id: t.id,
       title: t.title,
       estimateMinutes: t.estimateMinutes,
       dueDate: t.dueDate,
       scheduledDate: t.scheduledDate,
-    }))
-    .sort((a, b) => a.title.localeCompare(b.title));
+      urgency: t.urgency,
+      importance: t.importance,
+      sortOrder: t.sortOrder,
+    };
+  }
+
+  const thisWeekTasks: WeekTaskRow[] = thisWeekRows
+    .map((r) => mapTaskRow(r.task))
+    .sort(compareTasksForToday);
+
+  const nextWeekTasks: NextWeekTaskRow[] = nextWeekRows
+    .map((r) => mapTaskRow(r.task))
+    .sort(compareTasksForToday);
+
+  const weekCategoryGoals = aggregateWeekCategoryGoals(days);
 
   const plannedMinutes = nextWeekTasks.reduce(
     (s, t) => s + t.estimateMinutes,
@@ -125,6 +162,12 @@ export async function getWeekData(weekStart?: string) {
     nextUtc.timeMax,
   );
 
+  let weekOverworkMinutes = 0;
+  for (const d of days) {
+    if (!d.endedAt) continue;
+    weekOverworkMinutes += Math.max(0, d.workMinutes - d.workGoalMinutes);
+  }
+
   return {
     timezone,
     today,
@@ -132,6 +175,9 @@ export async function getWeekData(weekStart?: string) {
     nextWeekStart: nextMonday,
     days,
     avgScore,
+    weekOverworkMinutes,
+    thisWeekTasks,
+    weekCategoryGoals,
     nextWeekTasks,
     plannedMinutes,
     calendarThisWeek,

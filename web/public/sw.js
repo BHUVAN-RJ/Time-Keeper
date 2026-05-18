@@ -1,4 +1,4 @@
-const CACHE = "time-keeper-v2";
+const CACHE = "time-keeper-v3";
 const SHELL = ["/manifest.json", "/today"];
 
 self.addEventListener("install", (e) => {

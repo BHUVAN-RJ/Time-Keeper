@@ -1,26 +1,21 @@
 "use client";
 
-import { signIn } from "next-auth/react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { requestMagicLinkAction } from "@/actions/auth";
 
-export function LoginForm() {
+export function LoginForm({ resendTestMode }: { resendTestMode: boolean }) {
   const [email, setEmail] = useState("");
   const [pending, setPending] = useState(false);
   const [sent, setSent] = useState(false);
 
-  async function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
+  async function sendLink() {
     if (!email.trim()) return;
     setPending(true);
     try {
-      const res = await signIn("resend", {
-        email: email.trim(),
-        redirect: false,
-        callbackUrl: "/today",
-      });
-      if (res?.error) {
-        toast.error("Could not send link. Check Resend key and email.");
+      const res = await requestMagicLinkAction(email);
+      if (!res.ok) {
+        toast.error(res.message);
       } else {
         setSent(true);
       }
@@ -29,23 +24,60 @@ export function LoginForm() {
     }
   }
 
+  async function onSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    await sendLink();
+  }
+
   return (
     <div className="flex min-h-full flex-col items-center justify-center bg-tk-bg-deep px-6 py-16">
       <div className="w-full max-w-sm">
-        <div className="mb-8 flex items-center gap-2">
-          <span className="text-tk-honey" aria-hidden>
-            ◆
-          </span>
-          <h1 className="text-[22px] font-semibold tracking-tight text-tk-ink">
-            Time Keeper
-          </h1>
-        </div>
-        <p className="mb-6 text-[14px] text-tk-ink-2">
-          Sign in with a magic link sent to your email.
+        <h1 className="mb-8 text-[22px] font-semibold tracking-tight text-tk-ink">
+          Time Keeper
+        </h1>
+        <p className="mb-4 text-[14px] text-tk-ink-2">
+          Sign in with a magic link — no password. Use the same email as before
+          if you already have an account.
         </p>
+        {resendTestMode ? (
+          <p className="mb-4 rounded-xl border border-tk-line bg-tk-surface-2 px-3 py-2 text-[12px] text-tk-ink-3">
+            Dev note: emails from <span className="text-tk-ink-2">onboarding@resend.dev</span>{" "}
+            only reach the address on your Resend account until you verify a
+            domain in Resend.
+          </p>
+        ) : null}
         {sent ? (
-          <div className="card p-4 text-[14px] text-tk-ink-2">
-            Check your inbox for the sign-in link. You can close this tab.
+          <div className="flex flex-col gap-4">
+            <div className="card p-4 text-[14px] text-tk-ink-2">
+              <p className="font-medium text-tk-ink">Check your inbox</p>
+              <p className="mt-2">
+                We sent a sign-in link to{" "}
+                <span className="text-tk-ink">{email.trim()}</span>. It expires
+                in 24 hours.
+              </p>
+              <p className="mt-2 text-[13px] text-tk-ink-3">
+                Deleted the email or don&apos;t see it? Check spam, then send
+                another link below.
+              </p>
+            </div>
+            <button
+              type="button"
+              disabled={pending}
+              onClick={() => void sendLink()}
+              className="btn-ghost py-2 text-[14px] text-tk-ink-2 disabled:opacity-50"
+            >
+              {pending ? "Sending…" : "Send another link"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSent(false);
+                setEmail("");
+              }}
+              className="text-[13px] text-tk-ink-3 hover:text-tk-ink-2"
+            >
+              Use a different email
+            </button>
           </div>
         ) : (
           <form onSubmit={onSubmit} className="flex flex-col gap-4">

@@ -2,7 +2,7 @@
 
 import { auth } from "@/auth";
 import { db } from "@/db";
-import { categories, dailyReviews, tasks, timeBlocks } from "@/db/schema";
+import { categories, dailyReviews, projects, tasks, timeBlocks } from "@/db/schema";
 import { and, desc, eq, gte, isNotNull, or } from "drizzle-orm";
 import {
   computeDaySnapshot,
@@ -252,10 +252,30 @@ export async function getStatsPageData() {
     manualEntry: r.block.manualEntry,
   }));
 
+  const retired = await db
+    .select({ reason: projects.retiredReason })
+    .from(projects)
+    .where(
+      and(eq(projects.userId, userId), eq(projects.status, "retired")),
+    );
+
+  const retirementPatterns: { label: string; count: number }[] = [];
+  const bucket = (text: string | null) => {
+    if (!text?.trim()) return;
+    const key = text.trim().slice(0, 80);
+    const found = retirementPatterns.find((x) => x.label === key);
+    if (found) found.count += 1;
+    else retirementPatterns.push({ label: key, count: 1 });
+  };
+  for (const d of dropped) bucket(d.dropReason);
+  for (const r of retired) bucket(r.reason);
+  retirementPatterns.sort((a, b) => b.count - a.count);
+
   return {
     timezone,
     today,
     historyDays: HISTORY_DAYS,
+    retirementPatterns: retirementPatterns.slice(0, 12),
     todayScore: snap.productivityScore,
     rollingAvg,
     scoreVsAvg:

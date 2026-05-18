@@ -19,10 +19,13 @@ export function TodayV02Panel({
   extras,
   runningBlockId,
   onNeedStop,
+  yesterdayNeedsClose = false,
 }: {
   extras: Extras;
   runningBlockId: string | null;
   onNeedStop: () => void;
+  /** Block today's End Day until calendar yesterday is closed (AM catch-up). */
+  yesterdayNeedsClose?: boolean;
 }) {
   const router = useRouter();
   const { openQuickAdd } = useQuickAdd();
@@ -123,8 +126,17 @@ export function TodayV02Panel({
         <button
           type="button"
           className="btn-primary flex-1 py-3 text-[13px] font-semibold min-w-[140px]"
-          disabled={!!extras.dayEnded}
+          disabled={!!extras.dayEnded || yesterdayNeedsClose}
+          title={
+            yesterdayNeedsClose
+              ? "Close yesterday from the morning prompt first"
+              : undefined
+          }
           onClick={() => {
+            if (yesterdayNeedsClose) {
+              toast.message("Close yesterday first (use the prompt at the top).");
+              return;
+            }
             if (runningBlockId) {
               onNeedStop();
               toast.message("Stop your timer, then End Day.");
@@ -134,7 +146,11 @@ export function TodayV02Panel({
             setEndDayOpen(true);
           }}
         >
-          {extras.dayEnded ? "Day closed" : "End Day"}
+          {yesterdayNeedsClose
+            ? "Close yesterday first"
+            : extras.dayEnded
+              ? "Day closed"
+              : "End Day"}
         </button>
       </div>
 

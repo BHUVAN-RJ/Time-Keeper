@@ -102,6 +102,25 @@ export const categories = sqliteTable("categories", {
     .$defaultFn(() => new Date()),
 });
 
+export const projects = sqliteTable("projects", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  description: text("description"),
+  status: text("status", { enum: ["active", "paused", "retired"] })
+    .notNull()
+    .default("active"),
+  retiredAt: integer("retired_at", { mode: "timestamp_ms" }),
+  retiredReason: text("retired_reason"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
 export const tasks = sqliteTable("tasks", {
   id: text("id")
     .primaryKey()
@@ -114,7 +133,9 @@ export const tasks = sqliteTable("tasks", {
   categoryId: text("category_id").references(() => categories.id, {
     onDelete: "set null",
   }),
-  projectId: text("project_id"),
+  projectId: text("project_id").references(() => projects.id, {
+    onDelete: "set null",
+  }),
   estimateMinutes: integer("estimate_minutes").notNull(),
   actualMinutes: integer("actual_minutes").notNull().default(0),
   dueDate: text("due_date"), // YYYY-MM-DD in user TZ
@@ -138,6 +159,81 @@ export const tasks = sqliteTable("tasks", {
     .notNull()
     .$defaultFn(() => new Date()),
 });
+
+export const reminders = sqliteTable("reminders", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  title: text("title").notNull(),
+  remindAt: integer("remind_at", { mode: "timestamp_ms" }).notNull(),
+  recurring: text("recurring", {
+    enum: ["daily", "weekly", "monthly"],
+  }),
+  recurringDayOfWeek: integer("recurring_day_of_week"),
+  linkedTaskId: text("linked_task_id").references(() => tasks.id, {
+    onDelete: "set null",
+  }),
+  acknowledged: integer("acknowledged", { mode: "boolean" })
+    .notNull()
+    .default(false),
+  acknowledgedAt: integer("acknowledged_at", { mode: "timestamp_ms" }),
+  snoozedUntil: integer("snoozed_until", { mode: "timestamp_ms" }),
+  createdAt: integer("created_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
+export const tags = sqliteTable(
+  "tags",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => ({
+    userNameUnique: uniqueIndex("tags_user_name").on(t.userId, t.name),
+  }),
+);
+
+export const taskTags = sqliteTable(
+  "task_tags",
+  {
+    taskId: text("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    tagId: text("tag_id")
+      .notNull()
+      .references(() => tags.id, { onDelete: "cascade" }),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.taskId, t.tagId] }),
+  }),
+);
+
+export const timeBlockTags = sqliteTable(
+  "time_block_tags",
+  {
+    timeBlockId: text("time_block_id")
+      .notNull()
+      .references(() => timeBlocks.id, { onDelete: "cascade" }),
+    tagId: text("tag_id")
+      .notNull()
+      .references(() => tags.id, { onDelete: "cascade" }),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.timeBlockId, t.tagId] }),
+  }),
+);
 
 export const scheduleGoals = sqliteTable("schedule_goals", {
   id: text("id")
@@ -190,6 +286,7 @@ export const dayStatus = sqliteTable(
     creditsEarned: real("credits_earned").notNull().default(0),
     creditsSpent: real("credits_spent").notNull().default(0),
     creditsOverworkBonus: real("credits_overwork_bonus").notNull().default(0),
+    creditsWeeklyBonus: real("credits_weekly_bonus").notNull().default(0),
     isOffDay: integer("is_off_day", { mode: "boolean" }).notNull().default(false),
     isVacation: integer("is_vacation", { mode: "boolean" }).notNull().default(false),
     habitsCompletionPercent: real("habits_completion_percent"),
@@ -225,7 +322,9 @@ export const timeBlocks = sqliteTable(
     manualEntry: integer("manual_entry", { mode: "boolean" }).notNull().default(false),
     taskId: text("task_id").references(() => tasks.id, { onDelete: "set null" }),
     habitCompletionId: text("habit_completion_id"),
-    projectId: text("project_id"),
+    projectId: text("project_id").references(() => projects.id, {
+      onDelete: "set null",
+    }),
     randomBonusApplied: integer("random_bonus_applied", { mode: "boolean" })
       .notNull()
       .default(false),
@@ -244,6 +343,187 @@ export const timeBlocks = sqliteTable(
   }),
 );
 
+export const habits = sqliteTable("habits", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  description: text("description"),
+  targetPerDay: integer("target_per_day").notNull().default(1),
+  categoryId: text("category_id").references(() => categories.id, {
+    onDelete: "set null",
+  }),
+  active: integer("active", { mode: "boolean" }).notNull().default(true),
+  archivedAt: integer("archived_at", { mode: "timestamp_ms" }),
+  createdAt: integer("created_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
+export const habitCompletions = sqliteTable("habit_completions", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  habitId: text("habit_id")
+    .notNull()
+    .references(() => habits.id, { onDelete: "cascade" }),
+  completedAt: integer("completed_at", { mode: "timestamp_ms" }).notNull(),
+  count: integer("count").notNull().default(1),
+  notes: text("notes"),
+  linkedTimeBlockId: text("linked_time_block_id").references(
+    () => timeBlocks.id,
+    { onDelete: "set null" },
+  ),
+});
+
+export const habitStreaks = sqliteTable(
+  "habit_streaks",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    habitId: text("habit_id")
+      .notNull()
+      .references(() => habits.id, { onDelete: "cascade" }),
+    currentStreak: integer("current_streak").notNull().default(0),
+    longestStreak: integer("longest_streak").notNull().default(0),
+    daysHitLast30: integer("days_hit_last_30").notNull().default(0),
+    lastCompletedDate: text("last_completed_date"),
+    freezesAvailable: integer("freezes_available").notNull().default(2),
+    freezesUsedThisMonth: integer("freezes_used_this_month")
+      .notNull()
+      .default(0),
+    freezeMonthKey: text("freeze_month_key"),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => ({
+    habitUnique: uniqueIndex("habit_streaks_habit_id").on(t.habitId),
+  }),
+);
+
+/** Per-calendar-day rollup for heatmap, freezes, and streak recompute. */
+export const weeklyReviews = sqliteTable(
+  "weekly_reviews",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    weekStarting: text("week_starting").notNull(),
+    completedAt: integer("completed_at", { mode: "timestamp_ms" }),
+    commitmentsJson: text("commitments_json"),
+    droppedProjectId: text("dropped_project_id").references(() => projects.id, {
+      onDelete: "set null",
+    }),
+    habitChangeNote: text("habit_change_note"),
+    notes: text("notes"),
+  },
+  (t) => ({
+    userWeekUnique: uniqueIndex("weekly_reviews_user_week").on(
+      t.userId,
+      t.weekStarting,
+    ),
+  }),
+);
+
+export const productivityScores = sqliteTable(
+  "productivity_scores",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    date: text("date").notNull(),
+    score: integer("score").notNull(),
+    breakdownJson: text("breakdown_json"),
+    vsRollingAvg: real("vs_rolling_avg"),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.userId, t.date] }),
+  }),
+);
+
+export const offDayBalance = sqliteTable("off_day_balance", {
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => users.id, { onDelete: "cascade" }),
+  available: integer("available").notNull().default(0),
+  lifetimeForfeited: integer("lifetime_forfeited").notNull().default(0),
+  lastRecalcDate: text("last_recalc_date"),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
+export const offDayUses = sqliteTable(
+  "off_day_uses",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    date: text("date").notNull(),
+    reason: text("reason"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => ({
+    userDateUnique: uniqueIndex("off_day_uses_user_date").on(t.userId, t.date),
+  }),
+);
+
+export const overworkBank = sqliteTable("overwork_bank", {
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => users.id, { onDelete: "cascade" }),
+  unbankedMinutes: integer("unbanked_minutes").notNull().default(0),
+  bankedFreezeCredits: integer("banked_freeze_credits").notNull().default(0),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
+export const habitDaily = sqliteTable(
+  "habit_daily",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    habitId: text("habit_id")
+      .notNull()
+      .references(() => habits.id, { onDelete: "cascade" }),
+    date: text("date").notNull(),
+    completionCount: integer("completion_count").notNull().default(0),
+    freezeUsed: integer("freeze_used", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    offDaySkipped: integer("off_day_skipped", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" })
+      .notNull()
+      .$defaultFn(() => new Date()),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.userId, t.habitId, t.date] }),
+  }),
+);
+
 export const usersRelations = relations(users, ({ many }) => ({
   accounts: many(accounts),
   sessions: many(sessions),
@@ -253,10 +533,28 @@ export const usersRelations = relations(users, ({ many }) => ({
   dayStatuses: many(dayStatus),
   dailyReviews: many(dailyReviews),
   timeBlocks: many(timeBlocks),
+  habits: many(habits),
+  habitCompletions: many(habitCompletions),
+  projects: many(projects),
+  weeklyReviews: many(weeklyReviews),
+  reminders: many(reminders),
+  tags: many(tags),
+}));
+
+export const tagsRelations = relations(tags, ({ one, many }) => ({
+  user: one(users, { fields: [tags.userId], references: [users.id] }),
+  taskTags: many(taskTags),
+  timeBlockTags: many(timeBlockTags),
 }));
 
 export const dailyReviewsRelations = relations(dailyReviews, ({ one }) => ({
   user: one(users, { fields: [dailyReviews.userId], references: [users.id] }),
+}));
+
+export const projectsRelations = relations(projects, ({ one, many }) => ({
+  user: one(users, { fields: [projects.userId], references: [users.id] }),
+  tasks: many(tasks),
+  timeBlocks: many(timeBlocks),
 }));
 
 export const tasksRelations = relations(tasks, ({ one, many }) => ({
@@ -264,6 +562,10 @@ export const tasksRelations = relations(tasks, ({ one, many }) => ({
   category: one(categories, {
     fields: [tasks.categoryId],
     references: [categories.id],
+  }),
+  project: one(projects, {
+    fields: [tasks.projectId],
+    references: [projects.id],
   }),
   timeBlocks: many(timeBlocks),
 }));
@@ -293,6 +595,65 @@ export const timeBlocksRelations = relations(timeBlocks, ({ one }) => ({
   }),
   task: one(tasks, {
     fields: [timeBlocks.taskId],
+    references: [tasks.id],
+  }),
+  project: one(projects, {
+    fields: [timeBlocks.projectId],
+    references: [projects.id],
+  }),
+}));
+
+export const habitsRelations = relations(habits, ({ one, many }) => ({
+  user: one(users, { fields: [habits.userId], references: [users.id] }),
+  category: one(categories, {
+    fields: [habits.categoryId],
+    references: [categories.id],
+  }),
+  completions: many(habitCompletions),
+  streak: one(habitStreaks, {
+    fields: [habits.id],
+    references: [habitStreaks.habitId],
+  }),
+  daily: many(habitDaily),
+}));
+
+export const habitCompletionsRelations = relations(
+  habitCompletions,
+  ({ one }) => ({
+    user: one(users, {
+      fields: [habitCompletions.userId],
+      references: [users.id],
+    }),
+    habit: one(habits, {
+      fields: [habitCompletions.habitId],
+      references: [habits.id],
+    }),
+    timeBlock: one(timeBlocks, {
+      fields: [habitCompletions.linkedTimeBlockId],
+      references: [timeBlocks.id],
+    }),
+  }),
+);
+
+export const habitStreaksRelations = relations(habitStreaks, ({ one }) => ({
+  habit: one(habits, {
+    fields: [habitStreaks.habitId],
+    references: [habits.id],
+  }),
+}));
+
+export const habitDailyRelations = relations(habitDaily, ({ one }) => ({
+  user: one(users, { fields: [habitDaily.userId], references: [users.id] }),
+  habit: one(habits, {
+    fields: [habitDaily.habitId],
+    references: [habits.id],
+  }),
+}));
+
+export const remindersRelations = relations(reminders, ({ one }) => ({
+  user: one(users, { fields: [reminders.userId], references: [users.id] }),
+  task: one(tasks, {
+    fields: [reminders.linkedTaskId],
     references: [tasks.id],
   }),
 }));
@@ -329,6 +690,18 @@ export const userPreferences = sqliteTable("user_preferences", {
     .references(() => users.id, { onDelete: "cascade" }),
   /** Extra lines matched against event titles (built-in rules always apply). */
   calendarExcludePatterns: text("calendar_exclude_patterns"),
+  /** 0–100: share of overwork minutes converted to credits (rest → freeze bank). */
+  overworkCreditsPercent: real("overwork_credits_percent").notNull().default(50),
+  /** 0 = off; 30 / 60 / 90 = body-doubling ping interval (minutes). */
+  bodyDoublingIntervalMinutes: integer("body_doubling_interval_minutes")
+    .notNull()
+    .default(0),
+  /** When false, hide tag pickers and month tag breakdown. */
+  tagsEnabled: integer("tags_enabled", { mode: "boolean" }).notNull().default(true),
+  /** When false, hide reminder bell, banner, and AM rundown reminders. */
+  remindersEnabled: integer("reminders_enabled", { mode: "boolean" })
+    .notNull()
+    .default(false),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" })
     .notNull()
     .$defaultFn(() => new Date()),

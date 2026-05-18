@@ -679,51 +679,66 @@ The following are **implemented** in the Next.js app under `web/`: Resend magic 
 
 **Migrations:** `0001` tasks/schedule, `0002` day status, `0003` quality chores/meh, `0004` google calendar tables, `0005` `user_preferences.calendar_exclude_patterns`. Always run `cd web && npm run db:migrate` after pull.
 
-**Routes:** `/today`, `/week`, `/tasks`, `/categories`, `/stats`, `/settings`.
+**Routes:** `/today`, `/week`, `/tasks`, `/habits`, `/projects`, `/month`, `/categories`, `/stats`, `/settings`.
 
 **Partial vs spec (intentional, do not “fix” without user ask):**
-- Weekly Rundown Part A lacks full “time by category vs goals” chart on Week.
 - No per-calendar include/exclude UI — all calendars per account; use title filters for `.edu` office hours.
-- AM rundown exists but not full §6.12 (tomorrow top 3 pinning, batch close unclosed days) — v0.3.
+- AM rundown: credit balance line on AM still open (§6.12).
 
-**Next phase:** v0.3 only (§9 below). Do not implement v0.3+v0.4 in one pass.
+**Next phase:** finish **v0.4** (§9 below), then v0.5. Do not implement v0.4+v0.5 in one pass.
 
-### v0.3 — Habits, Rituals, ADHD core (5–7 days) — **NEXT**
+### v0.3 — Habits, Rituals, ADHD core — **MOSTLY COMPLETE** (dogfooding, May 2026)
 **Goal:** the full daily/weekly loop and the ADHD features that need data to work.
 
-- Habits: CRUD, today checklist, weekly heatmap
-- Streak freezes (2/month/habit, cap 5)
-- **`days_hit_last_30` as primary habit metric** (ADHD feature I)
-- AM Rundown
-- PM Review enhanced (mood, notes, tomorrow's top 3 pinning)
-- Silent countdown timer
-- Monthly view + score trend line
-- Off days with cap-5 stacking + nudge at 4+
-- Daily and weekly credit multipliers
-- Productivity score (0–100) + vs rolling avg
-- Variable reward bonus (1/week)
-- Overwork detection + split between credits and freeze bank
-- Projects CRUD + project tagging on time blocks/tasks
-- **Project staleness alerts** (ADHD feature E)
-- **Weekly Retrospective** (ADHD feature F)
-- **Weekly commitments pinned on Today** (ADHD feature G)
-- **Scope reality check on task creation** (ADHD feature A) — activates at ≥10 completed tasks
-- **Daily capacity limit warning** (ADHD feature B)
-- **Graceful retire button on projects** with required reason (ADHD feature K, full)
-- Retirement patterns view in stats
+**Authoritative detail:** [`docs/v0.3-phase.md`](docs/v0.3-phase.md).
 
-### v0.4 — Prioritization + Reminders (4–6 days)
+**Shipped in `web/`:**
+
+- Habits: CRUD, today checklist, 14-day heatmap; streak freezes; **`days_hit_last_30`** (ADHD I)
+- AM Rundown: yesterday gate, recap, top 3, habits, calendar peek, weekly commitments; **batch close** for multiple unclosed days (45-day lookback)
+- PM / End Day: mood, notes, tomorrow's top 3, incomplete resolutions, habits recap
+- Monthly recap view + category bars (`/month`, embedded in `/stats`)
+- **14-day productivity trend** on `/stats`
+- Off-day bank (cap 5), heavy-use check, revert on Week, rest nudge
+- Daily + weekly credit multipliers; variable bonus on stop; productivity score + vs rolling avg
+- **Overwork:** End Day applies split to credits + freeze bank; **Settings** slider for credits % (ADHD overwork split)
+- Projects: CRUD, status colors, tracked hours, tagging, staleness on Today, retire-with-reason (ADHD K)
+- Weekly retrospective on **Week** (collapsible, always available); Sunday **End Day** nudge → Week (ADHD F, G)
+- Scope reality on task create (≥10 completed); daily capacity warning (ADHD A, B)
+- Retirement patterns on `/stats`
+- Migrations `0006`–`0008`
+
+**Not shipped (intentional):**
+
+- **Silent countdown timer** (§6.14) — removed; focus presets + custom countdown on Today remain
+- Daily credit soft cap
+
+**Partial / polish still open:**
+
+- AM §6.12: credit balance line on AM rundown
+- Freeze redemption from overwork bank → v0.5
+
+**Completed in a later pass (May 2026, shipped with v0.4 work):** Week §6.17 category-vs-goals chart, open tasks this week, Eisenhower sort on next-week prep; Weekly retro §6.13 estimate trend, category totals, stale list; Month §6.16 score line + tag/quality breakdown. See [`docs/v0.4-phase.md`](docs/v0.4-phase.md).
+
+### v0.4 — Prioritization + Reminders (4–6 days) — **IN PROGRESS** (May 2026)
 **Goal:** the Eisenhower view, reminders, and the ADHD features that need 4+ weeks of data.
 
-- Eisenhower 2x2 with drag-drop
-- Within-quadrant ordering
-- Reminders (free-floating, in-app banners, snooze)
-- Tags on tasks and time blocks
-- Vacations (pre-apply with date range)
+**Authoritative detail:** [`docs/v0.4-phase.md`](docs/v0.4-phase.md).
+
+**Shipped in `web/`:**
+
+- Eisenhower 2×2 with drag-drop (cross-quadrant + within-quadrant reorder)
+- Reminders: list, create, edit, snooze, global banner + header bell
+- Tags on tasks and time blocks; optional disable in Settings (`tags_enabled`)
+- Vacations: Settings date range; Week/Today/habits/month rollups respect `is_vacation`
+- **Body doubling proxy** (ADHD H): stated intent on Deep work; interval pings (30/60/90 min)
+- Migrations `0009`–`0011`
+
+**Not shipped yet:**
+
 - Export (JSON + CSV) and import (JSON)
-- Settings polish (all knobs exposed)
-- **Body doubling proxy** (ADHD feature H)
-- **Realistic schedule proposals every 4 weeks** (ADHD feature J)
+- Settings polish (full score weights, red threshold, etc. — partial today)
+- **Realistic schedule proposals every 4 weeks** (ADHD J)
 
 ### v0.5 — Sharing + Polish (3–5 days)
 **Goal:** share with friends, smooth edges.
@@ -751,13 +766,13 @@ The following are **implemented** in the Next.js app under `web/`: Resend magic 
 
 ## 10. Handoff to coding agent
 
-**Current state (May 2026):** v0.1 and **v0.2 are complete** on `main`. Read this spec + [`tech_setup_v2.md`](tech_setup_v2.md) + phase docs [`docs/v0.1-phase.md`](docs/v0.1-phase.md) and [`docs/v0.2-phase.md`](docs/v0.2-phase.md).
+**Current state (May 2026):** v0.1 and **v0.2 are complete** on `main`. **v0.3 is mostly complete** for dogfooding (see [`docs/v0.3-phase.md`](docs/v0.3-phase.md)). **v0.4 is in progress** — Eisenhower, reminders, tags, vacations, and body doubling shipped; export/import and schedule proposals remain (see [`docs/v0.4-phase.md`](docs/v0.4-phase.md)). Read this spec + [`tech_setup_v2.md`](tech_setup_v2.md) + phase docs [`docs/v0.1-phase.md`](docs/v0.1-phase.md), [`docs/v0.2-phase.md`](docs/v0.2-phase.md), [`docs/v0.3-phase.md`](docs/v0.3-phase.md), [`docs/v0.4-phase.md`](docs/v0.4-phase.md).
 
-1. Implement **only the next phase** (currently **v0.3** per §9), then stop for dogfooding.
+1. Finish **remaining v0.4** items (export/import, schedule proposals, optional settings knobs), then stop for dogfooding — or defer explicitly with user.
 2. **Do not** rebuild v0.2 Google Calendar as Auth.js Google provider — calendar OAuth is intentionally separate (see `docs/v0.2-phase.md` §2).
-3. Run migrations after schema changes: `cd web && source .env.local && npm run db:migrate`.
+3. Run migrations after schema changes: `cd web && source .env.local && npm run db:migrate` (through **`0011`** for current v0.4).
 4. Match existing patterns: server actions, Drizzle schema, design tokens in `globals.css`, Sonner toasts bottom-center.
-5. When v0.3 ships, add `docs/v0.3-phase.md` and update §9 status the same way v0.2 was closed out.
+5. When v0.4 is fully closed, mark §9 v0.4 **COMPLETE** and trim stale “partial” bullets in v0.3.
 
 **Do not** let the agent build the whole spec in one pass. The cost isn't tokens — it's that rebuilding wrong abstractions later costs more than building correctly the second time.
 

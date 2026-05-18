@@ -3,13 +3,15 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Dialog from "@radix-ui/react-dialog";
 import { Pencil, Plus, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import type { getTodayDashboardExtras } from "@/actions/today-extras";
 import {
   createManualBlockAction,
   deleteBlockAction,
   getTodayData,
+  pollTodayData,
   startBlockAction,
   stopBlockAction,
   updateBlockAction,
@@ -20,7 +22,14 @@ import { RevertOffDayButton } from "@/components/revert-off-day-button";
 import { FocusModeView } from "@/components/focus-mode-view";
 import { OffDayCheckModal } from "@/components/off-day-check-modal";
 import { TodayScoreWidget } from "@/components/today-score-widget";
+import type { getAmRundownData } from "@/actions/am-rundown";
+import { AmRundownModal } from "@/components/am-rundown-modal";
+import { TodayHabitsPanel } from "@/components/today-habits-panel";
+import { TodayPinnedTop3 } from "@/components/today-pinned-top3";
+import { TodayV03Panel } from "@/components/today-v03-panel";
 import { TodayV02Panel } from "@/components/today-v02-panel";
+import { ProjectPicker } from "@/components/project-picker";
+import { TagPicker } from "@/components/tag-picker";
 import { formatCredits } from "@/lib/credits";
 import { QualityPicker } from "@/components/quality-picker";
 import {
@@ -33,6 +42,7 @@ import {
   readFocusSession,
   writeFocusSession,
 } from "@/lib/focus-session-storage";
+import { todayDataFingerprint } from "@/lib/today-data-fingerprint";
 
 type Initial = Awaited<ReturnType<typeof getTodayData>>;
 type Extras = Awaited<ReturnType<typeof getTodayDashboardExtras>>;
@@ -85,35 +95,34 @@ function RunningBlockPrimaryClock({
   serverSeconds: number;
   size?: "default" | "focus";
 }) {
-  const [targetMin, setTargetMin] = useState<number | null>(() => {
-    if (typeof window === "undefined") return null;
+  function focusClockState() {
     const s = readFocusSession();
-    return s?.blockId === blockId && s.targetMinutes > 0
-      ? s.targetMinutes
-      : null;
-  });
-  const [remainSec, setRemainSec] = useState(() => {
-    if (typeof window === "undefined") return 0;
-    const s = readFocusSession();
-    if (s?.blockId !== blockId || !(s.targetMinutes > 0)) return 0;
-    const capSec = s.targetMinutes * 60;
-    const elapsed = Math.floor(
-      (Date.now() - new Date(startIso).getTime()) / 1000,
-    );
-    return capSec - elapsed;
-  });
+    if (s?.blockId === blockId && s.targetMinutes > 0) {
+      const capSec = s.targetMinutes * 60;
+      const elapsed = Math.floor(
+        (Date.now() - new Date(startIso).getTime()) / 1000,
+      );
+      return {
+        targetMin: s.targetMinutes,
+        remainSec: capSec - elapsed,
+      };
+    }
+    return { targetMin: null as number | null, remainSec: 0 };
+  }
+
+  const [targetMin, setTargetMin] = useState<number | null>(
+    () => focusClockState().targetMin,
+  );
+  const [remainSec, setRemainSec] = useState(() => focusClockState().remainSec);
   const [elapsedSec, setElapsedSec] = useState(serverSeconds);
 
-  useEffect(() => {
-    queueMicrotask(() => {
-      const s = readFocusSession();
-      if (s?.blockId === blockId && s.targetMinutes > 0) {
-        setTargetMin(s.targetMinutes);
-      } else {
-        setTargetMin(null);
-      }
-    });
-  }, [blockId]);
+  const [clockKey, setClockKey] = useState(`${blockId}:${startIso}`);
+  if (`${blockId}:${startIso}` !== clockKey) {
+    const next = focusClockState();
+    setClockKey(`${blockId}:${startIso}`);
+    setTargetMin(next.targetMin);
+    setRemainSec(next.remainSec);
+  }
 
   useEffect(() => {
     if (targetMin == null) return;
@@ -143,10 +152,19 @@ function RunningBlockPrimaryClock({
       ? "mono text-[56px] font-semibold leading-none sm:text-[72px]"
       : "mono text-[40px] font-semibold leading-none sm:text-[44px]";
 
+  const centered = size === "focus";
+
   if (targetMin != null) {
     const over = remainSec < 0;
     return (
-      <div className="min-w-0 flex-1" suppressHydrationWarning>
+      <div
+        className={
+          centered
+            ? "flex w-full flex-col items-center text-center"
+            : "min-w-0 flex-1"
+        }
+        suppressHydrationWarning
+      >
         <div
           className={`${digitsClass} tabular-nums ${over ? "text-tk-red" : "text-tk-cream"}`}
         >
@@ -166,7 +184,9 @@ function RunningBlockPrimaryClock({
   const elapsed = splitElapsed(elapsedSec);
   return (
     <div
-      className={`${digitsClass} min-w-0 flex-1 text-tk-cream`}
+      className={`${digitsClass} tabular-nums text-tk-cream ${
+        centered ? "flex w-full justify-center" : "min-w-0 flex-1"
+      }`}
       suppressHydrationWarning
     >
       {elapsed.hh}
@@ -178,20 +198,48 @@ function RunningBlockPrimaryClock({
   );
 }
 
+type AmRundown = Awaited<ReturnType<typeof getAmRundownData>>;
+
 export function TodayClient({
   initial,
   extras,
+  amRundown,
 }: {
   initial: Initial;
   extras: Extras;
+  amRundown: AmRundown;
 }) {
+  const router = useRouter();
   const qc = useQueryClient();
-  const { data = initial, isFetching } = useQuery({
+  const initialRef = useRef(initial);
+  useEffect(() => {
+    initialRef.current = initial;
+  });
+
+  const { data = initial } = useQuery({
     queryKey: ["today"],
-    queryFn: () => getTodayData(),
+    queryFn: async () => {
+      const res = await pollTodayData();
+      if (!res.ok) {
+        router.replace("/login");
+        return initialRef.current;
+      }
+      return res.data;
+    },
     initialData: initial,
-    staleTime: 8_000,
-    refetchInterval: 20_000,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+    refetchIntervalInBackground: false,
+    retry: false,
+    structuralSharing: (prev, next) => {
+      if (
+        prev &&
+        todayDataFingerprint(prev as Initial) === todayDataFingerprint(next as Initial)
+      ) {
+        return prev;
+      }
+      return next;
+    },
   });
 
   const tz = data.timezone;
@@ -208,6 +256,9 @@ export function TodayClient({
       ? startCatPick
       : null;
   const startCat = validPick ?? firstActiveId;
+  const startCatName =
+    activeCats.find((c) => c.id === startCat)?.name ?? "";
+  const isStartDeepWork = startCatName === "Deep work";
 
   const running = data.running;
   const [stopOpen, setStopOpen] = useState(false);
@@ -218,13 +269,18 @@ export function TodayClient({
   const [stopCat, setStopCat] = useState("");
   const [stopQuality, setStopQuality] = useState<Quality>("useful");
   const [stopNotes, setStopNotes] = useState("");
+  const [stopProjectId, setStopProjectId] = useState("");
 
   const [manualStart, setManualStart] = useState("");
   const [manualEnd, setManualEnd] = useState("");
   const [manualLabel, setManualLabel] = useState("");
   const [manualCat, setManualCat] = useState("");
   const [manualQuality, setManualQuality] = useState<Quality>("useful");
+  const [manualProjectId, setManualProjectId] = useState("");
   const [focusTargetMin, setFocusTargetMin] = useState<number | null>(null);
+  const [startIntent, setStartIntent] = useState("");
+  const [stopTagIds, setStopTagIds] = useState<string[]>([]);
+  const [manualTagIds, setManualTagIds] = useState<string[]>([]);
   const [offDayCheckOpen, setOffDayCheckOpen] = useState(false);
   const [offDaysIn30, setOffDaysIn30] = useState(0);
 
@@ -239,7 +295,9 @@ export function TodayClient({
       toast.error("Add a category first.");
       return;
     }
-    const res = await startBlockAction(startCat);
+    const intent =
+      isStartDeepWork && startIntent.trim() ? startIntent.trim() : null;
+    const res = await startBlockAction(startCat, null, intent);
     if (!res.ok) {
       toast.error("A block is already running. Stop it first.");
       return;
@@ -252,6 +310,7 @@ export function TodayClient({
     } else {
       clearFocusSession();
     }
+    setStartIntent("");
     toast.success("Timer started");
     await qc.invalidateQueries({ queryKey: ["today"] });
   }
@@ -267,19 +326,30 @@ export function TodayClient({
       toast.error("Category is required.");
       return;
     }
-    await stopBlockAction({
-      blockId: running.id,
-      categoryId,
-      label: stopLabel,
-      quality: stopQuality,
-      notes: stopNotes || undefined,
-    });
-    clearFocusSession();
-    setStopOpen(false);
-    setStopLabel("");
-    setStopNotes("");
-    toast.success("Saved");
-    await qc.invalidateQueries({ queryKey: ["today"] });
+    try {
+      const stopped = await stopBlockAction({
+        blockId: running.id,
+        categoryId,
+        label: stopLabel,
+        quality: stopQuality,
+        notes: stopNotes || undefined,
+        projectId: stopProjectId || null,
+        tagIds: stopTagIds,
+      });
+      clearFocusSession();
+      setStopOpen(false);
+      setStopLabel("");
+      setStopNotes("");
+      setStopTagIds([]);
+      if (stopped.luckyBonus) {
+        toast.success("Lucky block — 1.5× credits");
+      } else {
+        toast.success("Saved");
+      }
+      await qc.invalidateQueries({ queryKey: ["today"] });
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not stop timer");
+    }
   }
 
   async function onManualSubmit() {
@@ -293,6 +363,8 @@ export function TodayClient({
       endAt: manualEnd,
       label: manualLabel,
       quality: manualQuality,
+      projectId: manualProjectId || null,
+      tagIds: manualTagIds,
     });
     if (!res.ok) {
       toast.error(res.error);
@@ -300,6 +372,7 @@ export function TodayClient({
     }
     setManualOpen(false);
     setManualLabel("");
+    setManualTagIds([]);
     toast.success("Block added");
     await qc.invalidateQueries({ queryKey: ["today"] });
   }
@@ -346,7 +419,9 @@ export function TodayClient({
     if (!res.ok && res.needsCheckIn) {
       setOffDaysIn30(res.offDaysIn30);
       setOffDayCheckOpen(true);
-    } else {
+    } else if (!res.ok && res.needsBank) {
+      toast.error(res.error ?? "No off days in bank");
+    } else if (res.ok) {
       toast.success("Today is an off day");
       await qc.invalidateQueries({ queryKey: ["today"] });
     }
@@ -354,6 +429,13 @@ export function TodayClient({
 
   return (
     <>
+      <AmRundownModal
+        data={amRundown}
+        runningBlockId={running?.id ?? null}
+        onNeedStop={() => {
+          if (running) setStopOpen(true);
+        }}
+      />
       <TodayScoreWidget />
       {running ? (
         <FocusModeView
@@ -373,7 +455,19 @@ export function TodayClient({
           setStopLabel={setStopLabel}
           stopQuality={stopQuality}
           setStopQuality={setStopQuality}
-          onOpenStop={() => setStopCat(running.categoryId)}
+          activeProjects={data.activeProjects}
+          stopProjectId={stopProjectId}
+          setStopProjectId={setStopProjectId}
+          tagsEnabled={data.tagsEnabled}
+          allTags={data.allTags}
+          stopTagIds={stopTagIds}
+          setStopTagIds={setStopTagIds}
+          onTagsChange={() => void qc.invalidateQueries({ queryKey: ["today"] })}
+          onOpenStop={() => {
+            setStopCat(running.categoryId);
+            setStopProjectId("");
+            setStopTagIds([]);
+          }}
           onStopSubmit={() => void onStopSubmit()}
         />
       ) : null}
@@ -386,23 +480,31 @@ export function TodayClient({
       <div
         className={`flex flex-1 flex-col gap-4 pb-8 ${running ? "hidden" : ""}`}
       >
-      {isFetching ? (
-        <div className="text-center text-[11px] text-tk-ink-4">Updating…</div>
-      ) : null}
-
       <TodayV02Panel
         extras={extras}
         runningBlockId={running?.id ?? null}
+        yesterdayNeedsClose={amRundown.mode === "unclosed"}
         onNeedStop={() => {
           if (running) setStopOpen(true);
         }}
       />
 
+      <TodayPinnedTop3 items={extras.pinnedTop3} />
+      <TodayV03Panel extras={extras} />
+
+      <TodayHabitsPanel
+        habits={extras.habits}
+        isOffDay={extras.isOffDay}
+        isVacation={extras.isVacation}
+      />
+
       <div className="px-1">
-        <div className="text-[22px] font-semibold tracking-tight text-tk-ink">
+          <div className="text-[22px] font-semibold tracking-tight text-tk-ink">
           {todayLabel}
         </div>
-        {extras.isOffDay ? (
+        {extras.isVacation ? (
+          <p className="mt-1 text-[12px] text-tk-ink-3">Today is vacation</p>
+        ) : extras.isOffDay ? (
           <div className="mt-1 flex flex-wrap items-center gap-2 text-[12px] text-tk-ink-3">
             <span>Today is an off day</span>
             <RevertOffDayButton
@@ -487,6 +589,17 @@ export function TodayClient({
               </option>
             ))}
           </select>
+          {isStartDeepWork ? (
+            <label className="text-[12px] text-tk-ink-2">
+              What are you doing in this block?
+              <input
+                className="mt-1 w-full rounded-xl border border-tk-line bg-tk-surface-2 px-3 py-2 text-tk-ink"
+                value={startIntent}
+                onChange={(e) => setStartIntent(e.target.value)}
+                placeholder="e.g. Draft Q3 OKRs"
+              />
+            </label>
+          ) : null}
           <button
             type="button"
             className="btn-primary py-3 text-[15px]"
@@ -520,8 +633,8 @@ export function TodayClient({
               </button>
             </Dialog.Trigger>
             <Dialog.Portal>
-              <Dialog.Overlay className="fixed inset-0 z-40 bg-black/70" />
-              <Dialog.Content className="card fixed left-1/2 top-1/2 z-50 max-h-[90vh] w-[min(100vw-2rem,400px)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto p-5 shadow-xl">
+              <Dialog.Overlay className="tk-modal-overlay z-40" />
+              <Dialog.Content className="tk-modal-content z-50 overflow-y-auto p-5">
                 <Dialog.Title className="text-lg font-semibold text-tk-ink">
                   Manual block
                 </Dialog.Title>
@@ -558,6 +671,11 @@ export function TodayClient({
                       ))}
                     </select>
                   </label>
+                  <ProjectPicker
+                    projects={data.activeProjects}
+                    value={manualProjectId}
+                    onChange={setManualProjectId}
+                  />
                   <label className="text-[12px] text-tk-ink-2">
                     Label
                     <input
@@ -574,6 +692,16 @@ export function TodayClient({
                       buttonClassName="flex-1 rounded-xl border px-2 py-2 text-[12px]"
                     />
                   </div>
+                  {data.tagsEnabled ? (
+                    <TagPicker
+                      allTags={data.allTags}
+                      selectedIds={manualTagIds}
+                      onChange={setManualTagIds}
+                      onTagsChange={() =>
+                        void qc.invalidateQueries({ queryKey: ["today"] })
+                      }
+                    />
+                  ) : null}
                 </div>
                 <div className="mt-5 flex justify-end gap-2">
                   <Dialog.Close asChild>
@@ -634,6 +762,18 @@ export function TodayClient({
                   {b.endAt ? ` → ${fmt(b.endAt, tz)}` : " · running"}
                   {b.quality ? ` · ${qualityLabel(b.quality)}` : ""}
                 </div>
+                {data.tagsEnabled && b.tagNames.length > 0 ? (
+                  <div className="mt-1.5 flex flex-wrap gap-1">
+                    {b.tagNames.map((name) => (
+                      <span
+                        key={name}
+                        className="rounded-md bg-tk-surface-2 px-1.5 py-0.5 text-[10px] text-tk-ink-3"
+                      >
+                        {name}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
                 {b.credits != null ? (
                   <div
                     className={`mono mt-1 text-[12px] ${b.credits < 0 ? "text-tk-red" : "text-tk-green"}`}
@@ -676,8 +816,8 @@ export function TodayClient({
 
       <Dialog.Root open={!!editRow} onOpenChange={(o) => !o && setEditRow(null)}>
         <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 z-40 bg-black/70" />
-          <Dialog.Content className="card fixed left-1/2 top-1/2 z-50 max-h-[90vh] w-[min(100vw-2rem,400px)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto p-5 shadow-xl">
+          <Dialog.Overlay className="tk-modal-overlay z-40" />
+          <Dialog.Content className="tk-modal-content z-50 overflow-y-auto p-5">
             <Dialog.Title className="text-lg font-semibold text-tk-ink">
               Edit block
             </Dialog.Title>

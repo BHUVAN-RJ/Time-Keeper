@@ -3,31 +3,12 @@ import { db } from "@/db";
 import { tasks, timeBlocks } from "@/db/schema";
 import { blockDurationMinutes } from "@/lib/block-minutes";
 
-export type TaskLike = {
-  urgency: number;
-  importance: number;
-  dueDate: string | null;
-  sortOrder: number;
-};
-
-export function eisenhowerQuadrant(urgency: number, importance: number) {
-  if (urgency <= 2 && importance <= 2) return 1;
-  if (urgency > 2 && importance <= 2) return 2;
-  if (urgency <= 2 && importance > 2) return 3;
-  return 4;
-}
-
-export function compareTasksForToday(a: TaskLike, b: TaskLike) {
-  const qa = eisenhowerQuadrant(a.urgency, a.importance);
-  const qb = eisenhowerQuadrant(b.urgency, b.importance);
-  if (qa !== qb) return qa - qb;
-  if (a.dueDate && b.dueDate && a.dueDate !== b.dueDate) {
-    return a.dueDate.localeCompare(b.dueDate);
-  }
-  if (a.dueDate && !b.dueDate) return -1;
-  if (!a.dueDate && b.dueDate) return 1;
-  return a.sortOrder - b.sortOrder;
-}
+export type { TaskPriorityLike as TaskLike } from "@/lib/eisenhower";
+export {
+  compareTasksForToday,
+  compareTasksInQuadrant,
+  eisenhowerQuadrant,
+} from "@/lib/eisenhower";
 
 export async function syncTaskActualMinutes(taskId: string, userId: string) {
   const rows = await db

@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
   completeTaskAction,
@@ -10,23 +10,27 @@ import {
   type TaskRow,
   scheduleTaskForTodayAction,
 } from "@/actions/tasks";
+import { EisenhowerBoard } from "@/components/eisenhower-board";
+import { ProjectPicker } from "@/components/project-picker";
+import { TagPicker } from "@/components/tag-picker";
+import { adjustedEstimateMinutes } from "@/lib/estimate-accuracy";
+import {
+  QUADRANT_META,
+  QUADRANTS,
+  eisenhowerQuadrant,
+} from "@/lib/eisenhower";
 
-type CategoryOption = { id: string; name: string; color: string };
-
-function eisenhowerQuadrant(urgency: number, importance: number) {
-  if (urgency <= 2 && importance <= 2) return "Q1";
-  if (urgency > 2 && importance <= 2) return "Q2";
-  if (urgency <= 2 && importance > 2) return "Q3";
-  return "Q4";
-}
+type Tab = "today" | "backlog" | "matrix";
 
 function TaskCard({
   task,
   today,
+  tagsEnabled,
   onRefresh,
 }: {
   task: TaskRow;
   today: string;
+  tagsEnabled: boolean;
   onRefresh: () => Promise<void>;
 }) {
   const [dropOpen, setDropOpen] = useState(false);
@@ -44,6 +48,7 @@ function TaskCard({
   }
 
   const quadrant = eisenhowerQuadrant(task.urgency, task.importance);
+  const quadrantCode = QUADRANT_META[quadrant].code;
 
   return (
     <li className="card flex flex-col gap-2 p-3">
@@ -52,7 +57,7 @@ function TaskCard({
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-medium text-tk-ink">{task.title}</span>
             <span className="rounded-md bg-tk-surface-2 px-1.5 py-0.5 text-[10px] font-medium text-tk-ink-3">
-              {quadrant}
+              {quadrantCode}
             </span>
             {task.rescheduleCount >= 3 ? (
               <span className="text-[10px] text-tk-warn">
@@ -71,9 +76,22 @@ function TaskCard({
                 </span>
               </>
             ) : null}
+            {task.projectName ? ` · ${task.projectName}` : null}
             {task.dueDate ? ` · due ${task.dueDate}` : null}
             {task.scheduledDate ? ` · sched ${task.scheduledDate}` : null}
           </p>
+          {tagsEnabled && task.tags.length > 0 ? (
+            <div className="mt-1.5 flex flex-wrap gap-1">
+              {task.tags.map((tag) => (
+                <span
+                  key={tag.id}
+                  className="rounded-md bg-tk-surface-2 px-1.5 py-0.5 text-[10px] text-tk-ink-3"
+                >
+                  {tag.name}
+                </span>
+              ))}
+            </div>
+          ) : null}
         </div>
       </div>
       <div className="flex flex-wrap gap-2">
@@ -88,8 +106,6 @@ function TaskCard({
                 toast.success(`Score: ${res.scoreAfter} (+${res.scoreDelta})`, {
                   duration: 3000,
                 });
-              } else if (res) {
-                toast.success("Completed");
               } else {
                 toast.success("Completed");
               }
@@ -151,23 +167,66 @@ function TaskCard({
   );
 }
 
+function TaskTabs({
+  tab,
+  onTab,
+}: {
+  tab: Tab;
+  onTab: (t: Tab) => void;
+}) {
+  const tabs: { id: Tab; label: string }[] = [
+    { id: "today", label: "Today" },
+    { id: "backlog", label: "Backlog" },
+    { id: "matrix", label: "Matrix" },
+  ];
+  return (
+    <div className="flex gap-1 rounded-xl border border-tk-line bg-tk-surface-2 p-1">
+      {tabs.map((t) => (
+        <button
+          key={t.id}
+          type="button"
+          onClick={() => onTab(t.id)}
+          className={`flex-1 rounded-lg px-3 py-2 text-[12px] font-medium transition-colors ${
+            tab === t.id
+              ? "bg-tk-surface text-tk-ink shadow-sm"
+              : "text-tk-ink-3 hover:text-tk-ink-2"
+          }`}
+        >
+          {t.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function TasksClient({
   initial,
+  embedded = false,
 }: {
-  initial: {
-    today: string;
-    todayTasks: TaskRow[];
-    backlogTasks: TaskRow[];
-    categories: CategoryOption[];
-  };
+  initial: Awaited<ReturnType<typeof import("@/actions/tasks").getTasksPageData>>;
+  embedded?: boolean;
 }) {
   const router = useRouter();
+  const [tab, setTab] = useState<Tab>("today");
   const [title, setTitle] = useState("");
   const [estimate, setEstimate] = useState("30");
   const [categoryId, setCategoryId] = useState("");
+  const [projectId, setProjectId] = useState("");
   const [dueDate, setDueDate] = useState("");
   const [scheduledDate, setScheduledDate] = useState(initial.today);
+  const [createTagIds, setCreateTagIds] = useState<string[]>([]);
   const [pending, setPending] = useState(false);
+  const hint = initial.estimateHint;
+  const estNum = Number(estimate) || 0;
+  const likelyMinutes =
+    hint && estNum > 0
+      ? adjustedEstimateMinutes(estNum, hint.multiplier)
+      : null;
+
+  const matrixTasks = useMemo(
+    () => QUADRANTS.flatMap((q) => initial.matrixByQuadrant[q]),
+    [initial.matrixByQuadrant],
+  );
 
   async function refresh() {
     router.refresh();
@@ -182,12 +241,15 @@ export function TasksClient({
         title: title.trim(),
         estimateMinutes: Number(estimate) || 0,
         categoryId: categoryId || null,
+        projectId: projectId || null,
         dueDate: dueDate || null,
         scheduledDate: scheduledDate || null,
+        tagIds: createTagIds,
       });
       setTitle("");
       setEstimate("30");
       setDueDate("");
+      setCreateTagIds([]);
       toast.success("Task created");
       await refresh();
     } catch (err) {
@@ -198,13 +260,16 @@ export function TasksClient({
   }
 
   return (
-    <div className="flex flex-col gap-6 py-2">
+    <div className={`flex flex-col gap-6 ${embedded ? "" : "py-2"}`}>
       <div>
         <h1 className="text-xl font-semibold text-tk-ink">Tasks</h1>
         <p className="mt-1 text-[13px] text-tk-ink-3">
-          v0.2 — estimate required. Today is {initial.today}.
+          Today is {initial.today}. Use Matrix to prioritize by urgency and
+          importance.
         </p>
       </div>
+
+      <TaskTabs tab={tab} onTab={setTab} />
 
       <form onSubmit={onCreate} className="card flex flex-col gap-3 p-4">
         <div className="eyebrow">New task</div>
@@ -224,6 +289,11 @@ export function TasksClient({
               value={estimate}
               onChange={(e) => setEstimate(e.target.value)}
             />
+            {likelyMinutes != null ? (
+              <span className="mt-1 text-[11px] text-tk-honey">
+                {estNum} min → likely {likelyMinutes} min from your history
+              </span>
+            ) : null}
           </label>
           <label className="flex flex-col text-[11px] text-tk-ink-3">
             Category
@@ -240,6 +310,12 @@ export function TasksClient({
               ))}
             </select>
           </label>
+          <ProjectPicker
+            projects={initial.activeProjects}
+            value={projectId}
+            onChange={setProjectId}
+            className="min-w-[140px]"
+          />
           <label className="flex flex-col text-[11px] text-tk-ink-3">
             Due
             <input
@@ -259,36 +335,71 @@ export function TasksClient({
             />
           </label>
         </div>
+        {initial.tagsEnabled ? (
+          <TagPicker
+            allTags={initial.allTags}
+            selectedIds={createTagIds}
+            onChange={setCreateTagIds}
+            onTagsChange={() => void refresh()}
+          />
+        ) : null}
         <button type="submit" disabled={pending} className="btn-primary self-start">
           Add task
         </button>
       </form>
 
-      <section>
-        <h2 className="eyebrow mb-2">Today</h2>
-        {initial.todayTasks.length === 0 ? (
-          <p className="text-[13px] text-tk-ink-3">Nothing scheduled for today yet.</p>
-        ) : (
-          <ul className="flex flex-col gap-2">
-            {initial.todayTasks.map((t) => (
-              <TaskCard key={t.id} task={t} today={initial.today} onRefresh={refresh} />
-            ))}
-          </ul>
-        )}
-      </section>
+      {tab === "matrix" ? (
+        <EisenhowerBoard
+          key={JSON.stringify(initial.matrixLayout)}
+          tasks={matrixTasks}
+          initialLayout={initial.matrixLayout}
+          onSaved={() => router.refresh()}
+        />
+      ) : null}
 
-      <section>
-        <h2 className="eyebrow mb-2">Backlog</h2>
-        {initial.backlogTasks.length === 0 ? (
-          <p className="text-[13px] text-tk-ink-3">Backlog is empty.</p>
-        ) : (
-          <ul className="flex flex-col gap-2">
-            {initial.backlogTasks.map((t) => (
-              <TaskCard key={t.id} task={t} today={initial.today} onRefresh={refresh} />
-            ))}
-          </ul>
-        )}
-      </section>
+      {tab === "today" ? (
+        <section>
+          <h2 className="eyebrow mb-2">Today</h2>
+          {initial.todayTasks.length === 0 ? (
+            <p className="text-[13px] text-tk-ink-3">
+              Nothing scheduled for today yet.
+            </p>
+          ) : (
+            <ul className="flex flex-col gap-2">
+              {initial.todayTasks.map((t) => (
+                <TaskCard
+                  key={t.id}
+                  task={t}
+                  today={initial.today}
+                  tagsEnabled={initial.tagsEnabled}
+                  onRefresh={refresh}
+                />
+              ))}
+            </ul>
+          )}
+        </section>
+      ) : null}
+
+      {tab === "backlog" ? (
+        <section>
+          <h2 className="eyebrow mb-2">Backlog</h2>
+          {initial.backlogTasks.length === 0 ? (
+            <p className="text-[13px] text-tk-ink-3">Backlog is empty.</p>
+          ) : (
+            <ul className="flex flex-col gap-2">
+              {initial.backlogTasks.map((t) => (
+                <TaskCard
+                  key={t.id}
+                  task={t}
+                  today={initial.today}
+                  tagsEnabled={initial.tagsEnabled}
+                  onRefresh={refresh}
+                />
+              ))}
+            </ul>
+          )}
+        </section>
+      ) : null}
     </div>
   );
 }

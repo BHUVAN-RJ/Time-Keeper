@@ -46,7 +46,10 @@ export default function RootLayout({
       lang="en"
       className={`${inter.variable} ${jetbrains.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">
+      <body
+        className="min-h-full flex flex-col"
+        suppressHydrationWarning
+      >
         <ServiceWorkerRegister />
         <AppProviders>{children}</AppProviders>
       </body>

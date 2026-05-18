@@ -3,6 +3,7 @@
 import * as Dialog from "@radix-ui/react-dialog";
 import Link from "next/link";
 import { useState } from "react";
+import { toast } from "sonner";
 import { markOffDayAction } from "@/actions/day-status";
 
 export function OffDayCheckModal({
@@ -25,6 +26,8 @@ export function OffDayCheckModal({
       if (res.ok) {
         onOpenChange(false);
         onDone();
+      } else if ("needsBank" in res && res.needsBank) {
+        toast.error(res.error ?? "No off days in bank");
       }
     } finally {
       setPending(false);
@@ -34,8 +37,8 @@ export function OffDayCheckModal({
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-black/70" />
-        <Dialog.Content className="card fixed left-1/2 top-1/2 z-50 w-[min(100vw-2rem,400px)] -translate-x-1/2 -translate-y-1/2 p-5">
+        <Dialog.Overlay className="tk-modal-overlay z-50" />
+        <Dialog.Content className="tk-modal-content z-[51] overflow-y-auto p-5">
           <Dialog.Title className="text-lg font-semibold text-tk-ink">
             Taking another off day?
           </Dialog.Title>
@@ -53,7 +56,7 @@ export function OffDayCheckModal({
               Yes, I need a real break
             </button>
             <Link
-              href="/categories"
+              href="/settings"
               className="btn-ghost w-full py-2 text-center text-[13px]"
               onClick={() => onOpenChange(false)}
             >

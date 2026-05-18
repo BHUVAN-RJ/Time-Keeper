@@ -7,6 +7,16 @@ import { and, count, eq, gte } from "drizzle-orm";
 import { revalidatePath, updateTag } from "next/cache";
 import { calendarDayInTz } from "@/lib/calendar-day";
 import { ensureDefaultCategories } from "@/lib/ensure-categories";
+import {
+  applyOffDayHabitSkips,
+  clearOffDayHabitSkips,
+} from "@/lib/habits-compute";
+import {
+  getOffDayBalance,
+  OFF_DAY_NUDGE_AT,
+  refundOffDay,
+  spendOffDay,
+} from "@/lib/off-day-balance";
 import { addDays, format, parseISO } from "date-fns";
 
 async function requireUser() {
@@ -52,6 +62,11 @@ export async function markOffDayAction(options?: {
     };
   }
 
+  const spend = await spendOffDay(userId, today);
+  if (!spend.ok) {
+    return { ok: false as const, error: spend.error, needsBank: true };
+  }
+
   const now = new Date();
   await db
     .insert(dayStatus)
@@ -71,16 +86,34 @@ export async function markOffDayAction(options?: {
       },
     });
 
+  await applyOffDayHabitSkips(userId, today, timezone);
+
   revalidatePath("/today");
   revalidatePath("/week");
   revalidatePath("/stats");
+  revalidatePath("/habits");
   updateTag(`week-${userId}`);
-  return { ok: true as const };
+  const bal = await getOffDayBalance(userId);
+  return {
+    ok: true as const,
+    offDaysAvailable: bal.available,
+    showRestNudge: bal.available >= OFF_DAY_NUDGE_AT,
+  };
+}
+
+export async function getOffDayBankSummary() {
+  const { userId } = await requireUser();
+  const bal = await getOffDayBalance(userId);
+  return {
+    available: bal.available,
+    lifetimeForfeited: bal.lifetimeForfeited,
+    showRestNudge: bal.available >= OFF_DAY_NUDGE_AT,
+  };
 }
 
 /** Undo an off-day mark (e.g. from Week tab). */
 export async function clearOffDayAction(date: string) {
-  const { userId } = await requireUser();
+  const { userId, timezone } = await requireUser();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     throw new Error("Invalid date");
   }
@@ -91,8 +124,12 @@ export async function clearOffDayAction(date: string) {
     .set({ isOffDay: false, updatedAt: now })
     .where(and(eq(dayStatus.userId, userId), eq(dayStatus.date, date)));
 
+  await clearOffDayHabitSkips(userId, date, timezone);
+  await refundOffDay(userId, date);
+
   revalidatePath("/today");
   revalidatePath("/week");
   revalidatePath("/stats");
+  revalidatePath("/habits");
   updateTag(`week-${userId}`);
 }

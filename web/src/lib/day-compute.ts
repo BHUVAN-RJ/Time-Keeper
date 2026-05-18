@@ -12,6 +12,7 @@ import { normalizeQuality, qualityCreditMultiplier } from "@/lib/quality";
 import { getDayRangeUtc } from "@/lib/day-range";
 import { goalsForDay } from "@/lib/ensure-schedule-goals";
 import { RED_DAY_THRESHOLD, WORK_CATEGORY_NAMES } from "@/lib/default-schedule-goals";
+import { habitsCompletionPercentForDay } from "@/lib/habits-compute";
 import { addDays, format, parseISO } from "date-fns";
 
 export type CategoryGoalRow = {
@@ -36,6 +37,7 @@ export type DaySnapshot = {
   categoryGoals: CategoryGoalRow[];
   endedAt: Date | null;
   isOffDay: boolean;
+  isVacation: boolean;
   /** True when the day was closed or has time blocks / scheduled tasks. */
   hasActivity: boolean;
   scoreBreakdown: {
@@ -123,7 +125,8 @@ function creditsForDay(rows: BlockRow[], date: string, timezone: string) {
     );
     if (mins <= 0) continue;
     const hours = mins / 60;
-    const raw = hours * category.baseCreditRate * qualityCreditMultiplier(q);
+    let raw = hours * category.baseCreditRate * qualityCreditMultiplier(q);
+    if (block.randomBonusApplied) raw *= 1.5;
     if (category.isFreeTime) spent += raw;
     else earned += raw;
   }
@@ -198,6 +201,7 @@ function buildDaySnapshot(
   blockRows: BlockRow[],
   goalRows: GoalRow[],
   dayTasks: (typeof tasks.$inferSelect)[],
+  habitsPercent: number,
 ): DaySnapshot {
   const categoryGoals: CategoryGoalRow[] = goalRows.map(({ goal, category }) => {
     const actual = minutesOnDay(blockRows, date, timezone, category.id);
@@ -226,9 +230,11 @@ function buildDaySnapshot(
       ? Math.round((totalActual / totalTarget) * 100)
       : 100;
 
-  const habitsPercent = 100;
   const dayScore = 0.7 * goalHitPercent + 0.3 * habitsPercent;
-  const isRed = dayScore < RED_DAY_THRESHOLD && !statusRow?.isOffDay;
+  const isRed =
+    dayScore < RED_DAY_THRESHOLD &&
+    !statusRow?.isOffDay &&
+    !statusRow?.isVacation;
 
   const taskScore = taskCompletionScoreFromRows(dayTasks);
   const qualScore = qualityScore(blockRows, date, timezone);
@@ -269,6 +275,7 @@ function buildDaySnapshot(
     categoryGoals,
     endedAt: statusRow?.endedAt ? new Date(statusRow.endedAt) : null,
     isOffDay: !!statusRow?.isOffDay,
+    isVacation: !!statusRow?.isVacation,
     hasActivity: dayHasActivity(statusRow, blockRows, dayTasks),
     scoreBreakdown: {
       timeComponent,
@@ -314,6 +321,8 @@ export async function computeDaySnapshot(
     date,
   );
 
+  const habitsPercent = await habitsCompletionPercentForDay(userId, date);
+
   return buildDaySnapshot(
     date,
     timezone,
@@ -321,6 +330,7 @@ export async function computeDaySnapshot(
     blockRows,
     goalRows,
     dayTasks,
+    habitsPercent,
   );
 }
 
@@ -396,7 +406,11 @@ export async function computeWeekSnapshots(
 
   const statusByDate = new Map(statusRows.map((r) => [r.date, r]));
 
-  return dates.map((date) => {
+  const habitsPercents = await Promise.all(
+    dates.map((d) => habitsCompletionPercentForDay(userId, d)),
+  );
+
+  return dates.map((date, i) => {
     const blockRows = allBlocks.filter(({ block }) => {
       const { startUtc, endUtc } = getDayRangeUtc(parseISO(date), timezone);
       const end = block.endAt ? new Date(block.endAt) : new Date();
@@ -412,6 +426,7 @@ export async function computeWeekSnapshots(
       blockRows,
       activeGoalsForDay(allGoals, date),
       tasksForDay(allTasks, date),
+      habitsPercents[i] ?? 100,
     );
   });
 }
@@ -430,7 +445,7 @@ export async function rollingProductivityAvg(
     dates.map((d) => computeDaySnapshot(userId, d, timezone)),
   );
   const scores = snaps
-    .filter((s) => s.hasActivity)
+    .filter((s) => s.hasActivity && !s.isOffDay && !s.isVacation)
     .map((s) => s.productivityScore);
   if (scores.length === 0) return null;
   return Math.round(scores.reduce((a, b) => a + b, 0) / scores.length);

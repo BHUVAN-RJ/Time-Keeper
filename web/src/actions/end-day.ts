@@ -11,8 +11,23 @@ import {
   dayCreditMultiplier,
   rollingProductivityAvg,
 } from "@/lib/day-compute";
+import {
+  applyAutoFreezesForDate,
+  habitsRecapForDate,
+} from "@/lib/habits-compute";
 import { ensureDefaultCategories } from "@/lib/ensure-categories";
-import { addDays, format, parseISO } from "date-fns";
+import { weeklyCreditBonusMinutes, weekStartMonday } from "@/lib/credits-bonus";
+import { accrueOffDaysOnEndDay } from "@/lib/off-day-balance";
+import { persistProductivityScore } from "@/lib/productivity-scores";
+import { getWeeklyReviewNudgeForEndDay } from "@/actions/weekly-review";
+import {
+  applyOverworkForDay,
+  formatOverworkMinutes,
+  getOverworkCreditsPercent,
+  overworkMinutes,
+  projectOverworkSplit,
+} from "@/lib/overwork";
+import { addDays, format, getDay, parseISO } from "date-fns";
 
 async function requireUser() {
   const session = await auth();
@@ -23,11 +38,18 @@ async function requireUser() {
   return { userId: id, timezone };
 }
 
-export async function getEndDayPreview() {
+/** Close a specific calendar day (today or catch-up for yesterday). */
+export async function getEndDayPreview(closeDate?: string) {
   const { userId, timezone } = await requireUser();
   const today = calendarDayInTz(new Date(), timezone);
-  const snap = await computeDaySnapshot(userId, today, timezone);
-  const rollingAvg = await rollingProductivityAvg(userId, timezone, today);
+  const closeDay = closeDate ?? today;
+  const snap = await computeDaySnapshot(userId, closeDay, timezone);
+  const rollingAvg = await rollingProductivityAvg(
+    userId,
+    timezone,
+    closeDay,
+  );
+  const habits = await habitsRecapForDate(userId, closeDay);
 
   const incomplete = await db
     .select()
@@ -36,7 +58,10 @@ export async function getEndDayPreview() {
       and(
         eq(tasks.userId, userId),
         inArray(tasks.status, ["scheduled", "in_progress"]),
-        or(eq(tasks.scheduledDate, today), eq(tasks.dueDate, today)),
+        or(
+          eq(tasks.scheduledDate, closeDay),
+          eq(tasks.dueDate, closeDay),
+        ),
       ),
     );
 
@@ -50,15 +75,31 @@ export async function getEndDayPreview() {
       ),
     );
 
+  const nextDay = format(addDays(parseISO(closeDay), 1), "yyyy-MM-dd");
+
+  const owMins = overworkMinutes(snap.workMinutes, snap.workGoalMinutes);
+  const creditsPercent = await getOverworkCreditsPercent(userId);
+  const owSplit = projectOverworkSplit(owMins, creditsPercent);
+
   return {
-    today,
+    closeDay,
+    isCatchUp: closeDay !== today,
+    nextDay,
     snapshot: snap,
     rollingAvg,
+    habits,
     scoreVsAvg:
       rollingAvg != null ? snap.productivityScore - rollingAvg : null,
     incomplete,
     pickableTasks: allTasks,
     alreadyEnded: !!snap.endedAt,
+    overwork: {
+      minutes: owMins,
+      creditsPercent,
+      projectedCreditBonus: owSplit.toCredits,
+      projectedBankMinutes: owSplit.toBank,
+      label: formatOverworkMinutes(owMins),
+    },
   };
 }
 
@@ -68,6 +109,7 @@ export type IncompleteResolution =
   | { taskId: string; action: "drop"; reason: string };
 
 export async function submitEndDayAction(input: {
+  closeDate?: string;
   mood?: number | null;
   notes?: string | null;
   tomorrowsTop3: string[];
@@ -75,10 +117,13 @@ export async function submitEndDayAction(input: {
 }) {
   const { userId, timezone } = await requireUser();
   const today = calendarDayInTz(new Date(), timezone);
-  const tomorrow = format(addDays(parseISO(today), 1), "yyyy-MM-dd");
-  const snap = await computeDaySnapshot(userId, today, timezone);
+  const closeDay = input.closeDate ?? today;
+  const nextDay = format(addDays(parseISO(closeDay), 1), "yyyy-MM-dd");
+
+  await applyAutoFreezesForDate(userId, closeDay, timezone);
+  const snap = await computeDaySnapshot(userId, closeDay, timezone);
   const mult = dayCreditMultiplier(snap.goalHitPercent);
-  const rollingAvg = await rollingProductivityAvg(userId, timezone, today);
+  const rollingAvg = await rollingProductivityAvg(userId, timezone, closeDay);
   const scoreVsAvg =
     rollingAvg != null ? snap.productivityScore - rollingAvg : 0;
 
@@ -92,7 +137,7 @@ export async function submitEndDayAction(input: {
       await db
         .update(tasks)
         .set({
-          scheduledDate: tomorrow,
+          scheduledDate: nextDay,
           status: "scheduled",
           rescheduleCount: (t?.n ?? 0) + 1,
           updatedAt: new Date(),
@@ -114,28 +159,51 @@ export async function submitEndDayAction(input: {
         })
         .where(and(eq(tasks.id, res.taskId), eq(tasks.userId, userId)));
     } else if (res.action === "drop") {
+      const reason = res.reason.trim();
+      if (!reason) throw new Error("Drop reason is required");
       await db
         .update(tasks)
         .set({
           status: "dropped",
           droppedAt: new Date(),
-          dropReason: res.reason.trim(),
+          dropReason: reason,
           updatedAt: new Date(),
         })
         .where(and(eq(tasks.id, res.taskId), eq(tasks.userId, userId)));
     }
   }
 
+  let weeklyBonus = 0;
+  const dow = getDay(parseISO(closeDay));
+  if (dow === 0) {
+    weeklyBonus = await weeklyCreditBonusMinutes(
+      userId,
+      weekStartMonday(closeDay),
+    );
+  }
+
+  const overwork = await applyOverworkForDay(
+    userId,
+    snap.workMinutes,
+    snap.workGoalMinutes,
+  );
+
+  const creditsEarned =
+    snap.creditsEarned * mult + weeklyBonus + overwork.creditBonus;
+
   const now = new Date();
   await db
     .insert(dayStatus)
     .values({
       userId,
-      date: today,
+      date: closeDay,
       goalHitPercent: snap.goalHitPercent,
       isRed: snap.isRed,
-      creditsEarned: snap.creditsEarned * mult,
+      habitsCompletionPercent: snap.scoreBreakdown.habitsPercent,
+      creditsEarned,
       creditsSpent: snap.creditsSpent,
+      creditsOverworkBonus: overwork.creditBonus,
+      creditsWeeklyBonus: weeklyBonus,
       productivityScore: snap.productivityScore,
       scoreVsAvgDelta: scoreVsAvg,
       endedAt: now,
@@ -146,8 +214,11 @@ export async function submitEndDayAction(input: {
       set: {
         goalHitPercent: snap.goalHitPercent,
         isRed: snap.isRed,
-        creditsEarned: snap.creditsEarned * mult,
+        habitsCompletionPercent: snap.scoreBreakdown.habitsPercent,
+        creditsEarned,
         creditsSpent: snap.creditsSpent,
+        creditsOverworkBonus: overwork.creditBonus,
+        creditsWeeklyBonus: weeklyBonus,
         productivityScore: snap.productivityScore,
         scoreVsAvgDelta: scoreVsAvg,
         endedAt: now,
@@ -155,11 +226,14 @@ export async function submitEndDayAction(input: {
       },
     });
 
+  await persistProductivityScore(userId, snap, rollingAvg);
+  await accrueOffDaysOnEndDay(userId, closeDay);
+
   await db
     .insert(dailyReviews)
     .values({
       userId,
-      date: today,
+      date: closeDay,
       pmCompletedAt: now,
       mood: input.mood ?? null,
       notes: input.notes?.trim() || null,
@@ -178,5 +252,15 @@ export async function submitEndDayAction(input: {
   revalidatePath("/today");
   revalidatePath("/week");
   revalidatePath("/tasks");
-  return { ok: true as const };
+  revalidatePath("/habits");
+  revalidatePath("/stats");
+
+  const weeklyReviewNudge = await getWeeklyReviewNudgeForEndDay(closeDay);
+  return {
+    ok: true as const,
+    weeklyBonusMinutes: weeklyBonus,
+    overworkBonus: overwork.creditBonus,
+    overworkMinutes: overwork.overworkMinutes,
+    weeklyReviewNudge: weeklyReviewNudge.show,
+  };
 }

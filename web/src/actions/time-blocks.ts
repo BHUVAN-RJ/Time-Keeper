@@ -2,9 +2,17 @@
 
 import { auth } from "@/auth";
 import { db } from "@/db";
-import { categories, tasks, timeBlocks } from "@/db/schema";
-import { and, desc, eq, gte, isNotNull, isNull, lte, or } from "drizzle-orm";
+import {
+  categories,
+  tags,
+  tasks,
+  timeBlocks,
+  timeBlockTags,
+  userPreferences,
+} from "@/db/schema";
+import { and, desc, eq, gte, inArray, isNull, lte, or } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { tryApplyVariableBonus } from "@/lib/credits-bonus";
 import { blockCreditsMinutes } from "@/lib/credits";
 import { isQuality, normalizeQuality, type Quality } from "@/lib/quality";
 
@@ -13,6 +21,9 @@ export type BlockActionResult =
   | { ok: false; error: string };
 import { getDayRangeUtc } from "@/lib/day-range";
 import { ensureDefaultCategories } from "@/lib/ensure-categories";
+import { listActiveProjects } from "@/actions/projects";
+import { getTagsEnabledForUser } from "@/actions/preferences";
+import { listTagsForUser, setBlockTags } from "@/lib/tag-utils";
 import { syncTaskActualMinutes } from "@/lib/task-utils";
 
 async function requireUser() {
@@ -37,9 +48,11 @@ export type TodayBlockRow = {
   isFreeTime: boolean;
   baseCreditRate: number;
   credits: number | null;
+  tagNames: string[];
 };
 
 export async function getTodayData(): Promise<{
+  activeProjects: { id: string; name: string }[];
   timezone: string;
   /** "Thursday, May 15" style in user TZ — computed on server to avoid hydration drift */
   calendarHeadline: string;
@@ -47,11 +60,14 @@ export async function getTodayData(): Promise<{
   runningElapsedSeconds: number;
   running: TodayBlockRow | null;
   blocks: TodayBlockRow[];
-  creditBalance: number;
   suspiciousLongRun: boolean;
   categories: { id: string; name: string; color: string; archived: boolean }[];
+  allTags: { id: string; name: string }[];
+  tagsEnabled: boolean;
+  bodyDoublingIntervalMinutes: number;
 }> {
   const { userId, timezone } = await requireUser();
+  const activeProjects = await listActiveProjects();
   const now = new Date();
   const calendarHeadline = new Intl.DateTimeFormat("en-US", {
     timeZone: timezone,
@@ -100,17 +116,19 @@ export async function getTodayData(): Promise<{
   const mapRow = (
     block: typeof timeBlocks.$inferSelect,
     cat: typeof categories.$inferSelect,
+    tagNames: string[] = [],
   ): TodayBlockRow => {
     let credits: number | null = null;
     if (block.endAt && block.quality) {
       const q = normalizeQuality(block.quality);
       if (q) {
-        const raw = blockCreditsMinutes({
+        let raw = blockCreditsMinutes({
           startAt: new Date(block.startAt),
           endAt: new Date(block.endAt),
           baseCreditRatePerHour: cat.baseCreditRate,
           quality: q,
         });
+        if (block.randomBonusApplied) raw *= 1.5;
         credits = cat.isFreeTime ? -raw : raw;
       }
     }
@@ -127,11 +145,41 @@ export async function getTodayData(): Promise<{
       isFreeTime: cat.isFreeTime,
       baseCreditRate: cat.baseCreditRate,
       credits,
+      tagNames,
     };
   };
 
+  const blockIds = [
+    ...new Set([
+      ...dayRows.map((r) => r.block.id),
+      ...runningRows.map((r) => r.block.id),
+    ]),
+  ];
+  const tagNameMap = new Map<string, string[]>();
+  if (blockIds.length > 0) {
+    const tagRows = await db
+      .select({
+        blockId: timeBlockTags.timeBlockId,
+        name: tags.name,
+      })
+      .from(timeBlockTags)
+      .innerJoin(tags, eq(timeBlockTags.tagId, tags.id))
+      .where(
+        and(eq(tags.userId, userId), inArray(timeBlockTags.timeBlockId, blockIds)),
+      );
+    for (const tr of tagRows) {
+      const list = tagNameMap.get(tr.blockId) ?? [];
+      list.push(tr.name);
+      tagNameMap.set(tr.blockId, list);
+    }
+  }
+
   const running = runningRows[0]
-    ? mapRow(runningRows[0].block, runningRows[0].category)
+    ? mapRow(
+        runningRows[0].block,
+        runningRows[0].category,
+        tagNameMap.get(runningRows[0].block.id) ?? [],
+      )
     : null;
 
   const runningElapsedSeconds = running
@@ -148,51 +196,70 @@ export async function getTodayData(): Promise<{
   for (const r of dayRows) {
     if (seen.has(r.block.id)) continue;
     seen.add(r.block.id);
-    blocks.push(mapRow(r.block, r.category));
-  }
-
-  const allDone = await db
-    .select({ block: timeBlocks, category: categories })
-    .from(timeBlocks)
-    .innerJoin(categories, eq(timeBlocks.categoryId, categories.id))
-    .where(and(eq(timeBlocks.userId, userId), isNotNull(timeBlocks.endAt)));
-
-  let creditBalance = 0;
-  for (const r of allDone) {
-    const q = normalizeQuality(r.block.quality);
-    if (!q) continue;
-    const raw = blockCreditsMinutes({
-      startAt: new Date(r.block.startAt),
-      endAt: new Date(r.block.endAt!),
-      baseCreditRatePerHour: r.category.baseCreditRate,
-      quality: q,
-    });
-    creditBalance += r.category.isFreeTime ? -raw : raw;
+    blocks.push(mapRow(r.block, r.category, tagNameMap.get(r.block.id) ?? []));
   }
 
   const suspiciousLongRun =
     !!running &&
     Date.now() - new Date(running.startAt).getTime() > 24 * 60 * 60 * 1000;
 
+  const [allTags, prefRow] = await Promise.all([
+    listTagsForUser(userId),
+    db
+      .select({
+        m: userPreferences.bodyDoublingIntervalMinutes,
+        tagsEnabled: userPreferences.tagsEnabled,
+      })
+      .from(userPreferences)
+      .where(eq(userPreferences.userId, userId))
+      .limit(1)
+      .then((r) => r[0]),
+  ]);
+  const tagsEnabled = prefRow?.tagsEnabled ?? true;
+
   return {
+    activeProjects,
     timezone,
     calendarHeadline,
     runningElapsedSeconds,
     running,
     blocks,
-    creditBalance,
     suspiciousLongRun,
     categories: cats,
+    allTags: tagsEnabled ? allTags : [],
+    tagsEnabled,
+    bodyDoublingIntervalMinutes: prefRow?.m ?? 0,
   };
+}
+
+export type TodayData = Awaited<ReturnType<typeof getTodayData>>;
+
+export type PollTodayDataResult =
+  | { ok: true; data: TodayData }
+  | { ok: false; unauthorized: true };
+
+/** Client polling — never throws on auth loss (avoids broken server-action responses). */
+export async function pollTodayData(): Promise<PollTodayDataResult> {
+  try {
+    const data = await getTodayData();
+    return { ok: true, data };
+  } catch (e) {
+    if (e instanceof Error && e.message === "Unauthorized") {
+      return { ok: false, unauthorized: true };
+    }
+    throw e;
+  }
 }
 
 export async function startBlockAction(
   categoryId: string,
   taskId?: string | null,
+  statedIntent?: string | null,
 ) {
   const { userId } = await requireUser();
   const now = new Date();
   let label: string | null = null;
+  let projectId: string | null = null;
   if (taskId) {
     const [task] = await db
       .select()
@@ -202,6 +269,7 @@ export async function startBlockAction(
     if (!task) throw new Error("Task not found");
     label = task.title;
     if (task.categoryId) categoryId = task.categoryId;
+    projectId = task.projectId;
     await db
       .update(tasks)
       .set({ status: "in_progress", updatedAt: now })
@@ -214,8 +282,10 @@ export async function startBlockAction(
         userId,
         categoryId,
         taskId: taskId ?? null,
+        projectId,
         startAt: now,
         label,
+        statedIntent: statedIntent?.trim() || null,
         manualEntry: false,
         randomBonusApplied: false,
         createdAt: now,
@@ -242,8 +312,10 @@ export async function stopBlockAction(input: {
   label: string;
   quality: Quality;
   notes?: string;
-}) {
-  const { userId } = await requireUser();
+  projectId?: string | null;
+  tagIds?: string[];
+}): Promise<{ ok: true; luckyBonus?: boolean }> {
+  const { userId, timezone } = await requireUser();
   const now = new Date();
   const [running] = await db
     .select()
@@ -266,6 +338,16 @@ export async function stopBlockAction(input: {
   if (!categoryId) throw new Error("Category is required");
   if (!label) throw new Error("Label is required");
 
+  const [cat] = await db
+    .select()
+    .from(categories)
+    .where(
+      and(eq(categories.id, categoryId), eq(categories.userId, userId)),
+    )
+    .limit(1);
+
+  const projectId = input.projectId?.trim() || null;
+
   await db
     .update(timeBlocks)
     .set({
@@ -274,6 +356,7 @@ export async function stopBlockAction(input: {
       label,
       quality: input.quality,
       notes: input.notes?.trim() || null,
+      projectId,
       updatedAt: now,
     })
     .where(
@@ -284,11 +367,29 @@ export async function stopBlockAction(input: {
       ),
     );
 
+  let luckyBonus = false;
+  if (cat && !cat.isFreeTime) {
+    const bonus = await tryApplyVariableBonus({
+      userId,
+      blockId: input.blockId,
+      quality: input.quality,
+      startAt: new Date(running.startAt),
+      endAt: now,
+      baseCreditRatePerHour: cat.baseCreditRate,
+      timezone,
+    });
+    luckyBonus = bonus.applied;
+  }
+
   if (running?.taskId) {
     await syncTaskActualMinutes(running.taskId, userId);
   }
+  if (input.tagIds?.length && (await getTagsEnabledForUser(userId))) {
+    await setBlockTags(userId, input.blockId, input.tagIds);
+  }
   revalidatePath("/today");
   revalidatePath("/tasks");
+  return { ok: true as const, luckyBonus };
 }
 
 export async function startBlockForTaskAction(taskId: string) {
@@ -322,6 +423,8 @@ export async function createManualBlockAction(input: {
   label: string;
   quality: Quality;
   notes?: string;
+  projectId?: string | null;
+  tagIds?: string[];
 }): Promise<BlockActionResult> {
   const { userId } = await requireUser();
   const start = new Date(input.startAt);
@@ -333,19 +436,30 @@ export async function createManualBlockAction(input: {
     return { ok: false, error: "Pick a quality rating." };
   }
   const now = new Date();
-  await db.insert(timeBlocks).values({
-    userId,
-    categoryId: input.categoryId,
-    startAt: start,
-    endAt: end,
-    label: input.label.trim(),
-    quality: input.quality,
-    notes: input.notes?.trim() || null,
-    manualEntry: true,
-    randomBonusApplied: false,
-    createdAt: now,
-    updatedAt: now,
-  });
+  const inserted = await db
+    .insert(timeBlocks)
+    .values({
+      userId,
+      categoryId: input.categoryId,
+      projectId: input.projectId?.trim() || null,
+      startAt: start,
+      endAt: end,
+      label: input.label.trim(),
+      quality: input.quality,
+      notes: input.notes?.trim() || null,
+      manualEntry: true,
+      randomBonusApplied: false,
+      createdAt: now,
+      updatedAt: now,
+    })
+    .returning({ id: timeBlocks.id });
+  if (
+    input.tagIds?.length &&
+    inserted[0] &&
+    (await getTagsEnabledForUser(userId))
+  ) {
+    await setBlockTags(userId, inserted[0].id, input.tagIds);
+  }
   revalidatePath("/today");
   return { ok: true };
 }
@@ -358,6 +472,7 @@ export async function updateBlockAction(input: {
   label: string;
   quality: Quality | null;
   notes?: string;
+  projectId?: string | null;
 }): Promise<BlockActionResult> {
   const { userId } = await requireUser();
   const start = new Date(input.startAt);
@@ -378,6 +493,7 @@ export async function updateBlockAction(input: {
       label: input.label.trim(),
       quality: input.quality,
       notes: input.notes?.trim() || null,
+      projectId: input.projectId?.trim() || null,
       updatedAt: now,
     })
     .where(and(eq(timeBlocks.id, input.blockId), eq(timeBlocks.userId, userId)));

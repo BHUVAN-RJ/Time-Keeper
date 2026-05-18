@@ -43,6 +43,55 @@
       "when": 1778972400000,
       "tag": "0005_calendar_exclude_prefs",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1779050000000,
+      "tag": "0006_habits",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1779055000000,
+      "tag": "0007_habit_off_day_skip",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1779060000000,
+      "tag": "0008_v03_part2",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1779140000000,
+      "tag": "0009_reminders",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1779220000000,
+      "tag": "0010_v04_tags_vacation_body",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1779300000000,
+      "tag": "0011_tags_enabled_pref",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1779400000000,
+      "tag": "0012_reminders_enabled_pref",
+      "breakpoints": true
     }
   ]
 }

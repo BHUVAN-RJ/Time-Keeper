@@ -11,19 +11,78 @@ import {
 } from "@/actions/end-day";
 import { formatScoreBreakdown } from "@/lib/score-breakdown";
 import { formatCredits } from "@/lib/credits";
+import { formatOverworkMinutes } from "@/lib/overwork";
+import { WeeklyReviewNudgeModal } from "@/components/weekly-review-nudge-modal";
 
 type Preview = Awaited<ReturnType<typeof getEndDayPreview>>;
+
+function resolutionChipClass(active: boolean, tone: "default" | "danger" = "default") {
+  const base =
+    "rounded-lg px-3 py-1.5 text-[11px] font-medium transition-colors";
+  if (!active) return `${base} btn-ghost`;
+  if (tone === "danger") {
+    return `${base} border-2 border-tk-red bg-tk-red/25 text-tk-red ring-2 ring-tk-red/30`;
+  }
+  return `${base} border-2 border-tk-honey bg-tk-honey/30 text-tk-honey ring-2 ring-tk-honey/50`;
+}
 
 export function EndDayDialog({
   open,
   onOpenChange,
   runningBlockId,
   onNeedStop,
+  closeDate,
+  title,
+  onSuccess,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   runningBlockId: string | null;
   onNeedStop: () => void;
+  closeDate?: string;
+  title?: string;
+  onSuccess?: () => void;
+}) {
+  const [weeklyNudgeOpen, setWeeklyNudgeOpen] = useState(false);
+
+  return (
+    <>
+      {open ? (
+        <EndDayDialogBody
+          key={closeDate ?? "today"}
+          runningBlockId={runningBlockId}
+          onNeedStop={onNeedStop}
+          closeDate={closeDate}
+          title={title}
+          onSuccess={onSuccess}
+          onOpenChange={onOpenChange}
+          onWeeklyReviewNudge={() => setWeeklyNudgeOpen(true)}
+        />
+      ) : null}
+      <WeeklyReviewNudgeModal
+        open={weeklyNudgeOpen}
+        onOpenChange={setWeeklyNudgeOpen}
+      />
+    </>
+  );
+}
+
+function EndDayDialogBody({
+  runningBlockId,
+  onNeedStop,
+  closeDate,
+  title,
+  onSuccess,
+  onOpenChange,
+  onWeeklyReviewNudge,
+}: {
+  runningBlockId: string | null;
+  onNeedStop: () => void;
+  closeDate?: string;
+  title?: string;
+  onSuccess?: () => void;
+  onOpenChange: (v: boolean) => void;
+  onWeeklyReviewNudge: () => void;
 }) {
   const router = useRouter();
   const [preview, setPreview] = useState<Preview | null>(null);
@@ -35,37 +94,106 @@ export function EndDayDialog({
   const [resolutions, setResolutions] = useState<
     Record<string, IncompleteResolution>
   >({});
+  const [pickDates, setPickDates] = useState<Record<string, string>>({});
+  const [dropDrafts, setDropDrafts] = useState<Record<string, string>>({});
   const [pending, setPending] = useState(false);
 
   useEffect(() => {
-    void getEndDayPreview().then(setPreview);
-  }, []);
+    void getEndDayPreview(closeDate).then(setPreview);
+  }, [closeDate]);
 
-  if (!open) return null;
+  const snapshot = preview?.snapshot;
+  const scoreVsAvg = preview?.scoreVsAvg;
+  const incomplete = preview?.incomplete ?? [];
+  const habits = preview?.habits ?? [];
+  const breakdown = snapshot
+    ? formatScoreBreakdown(snapshot.scoreBreakdown)
+    : [];
+  const dialogTitle =
+    title ?? (preview?.isCatchUp ? "Close yesterday" : "End Day");
+
+  function setAction(
+    taskId: string,
+    action: "tomorrow" | "date" | "drop",
+    date?: string,
+  ) {
+    if (action === "tomorrow") {
+      setResolutions((r) => ({
+        ...r,
+        [taskId]: { taskId, action: "tomorrow" },
+      }));
+      return;
+    }
+    if (action === "date") {
+      const d = date ?? pickDates[taskId] ?? preview?.nextDay ?? "";
+      setResolutions((r) => ({
+        ...r,
+        [taskId]: { taskId, action: "date", date: d },
+      }));
+      return;
+    }
+    const reason = dropDrafts[taskId]?.trim() ?? "";
+    setResolutions((r) => ({
+      ...r,
+      [taskId]: { taskId, action: "drop", reason },
+    }));
+  }
+
+  function validateIncomplete(): string | null {
+    for (const t of incomplete) {
+      const r = resolutions[t.id];
+      if (!r) return `Choose what to do with “${t.title}”.`;
+      if (r.action === "drop" && !r.reason.trim()) {
+        return `Add a drop reason for “${t.title}”.`;
+      }
+      if (r.action === "date" && !r.date) {
+        return `Pick a date for “${t.title}”.`;
+      }
+    }
+    return null;
+  }
 
   async function onSubmit() {
-    if (!preview) return;
-    if (runningBlockId) {
+    if (!preview || !snapshot) return;
+    if (!closeDate && runningBlockId) {
       onNeedStop();
       toast.error("Stop the running timer first.");
       return;
     }
-    const list: IncompleteResolution[] = preview.incomplete.map((t) => {
+    const err = validateIncomplete();
+    if (err) {
+      toast.error(err);
+      return;
+    }
+    const list: IncompleteResolution[] = incomplete.map((t) => {
       const r = resolutions[t.id];
       if (r) return r;
       return { taskId: t.id, action: "tomorrow" as const };
     });
     setPending(true);
     try {
-      await submitEndDayAction({
+      const result = await submitEndDayAction({
+        closeDate: preview.closeDay,
         mood,
         notes,
         tomorrowsTop3: top3,
         incompleteResolutions: list,
       });
-      toast.success("Day closed — see you tomorrow");
+      const owNote =
+        result.overworkMinutes > 0
+          ? ` · +${formatCredits(result.overworkBonus)} overwork`
+          : "";
+      toast.success(
+        preview.isCatchUp
+          ? `Yesterday closed${owNote}`
+          : `Day closed — see you tomorrow${owNote}`,
+      );
       onOpenChange(false);
+      onSuccess?.();
       router.refresh();
+      if (result.weeklyReviewNudge) {
+        onWeeklyReviewNudge();
+      }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not end day");
     } finally {
@@ -73,30 +201,45 @@ export function EndDayDialog({
     }
   }
 
-  const snapshot = preview?.snapshot;
-  const scoreVsAvg = preview?.scoreVsAvg;
-  const incomplete = preview?.incomplete ?? [];
-  const breakdown = snapshot
-    ? formatScoreBreakdown(snapshot.scoreBreakdown)
-    : [];
-
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+    <Dialog.Root open onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-40 bg-black/70" />
-        <Dialog.Content className="card fixed inset-x-4 bottom-4 z-50 max-h-[85vh] overflow-y-auto p-5 sm:left-1/2 sm:top-1/2 sm:w-[min(100vw-2rem,420px)] sm:-translate-x-1/2 sm:-translate-y-1/2">
+        <Dialog.Overlay className="ritual-overlay z-[60]" />
+        <Dialog.Content className="ritual-content z-[61] max-h-[min(88vh,720px)] overflow-y-auto p-5">
           <Dialog.Title className="text-lg font-semibold text-tk-ink">
-            End Day
+            {dialogTitle}
           </Dialog.Title>
 
           {!preview || !snapshot ? (
             <p className="mt-4 text-[13px] text-tk-ink-3">Loading…</p>
           ) : null}
 
-          {preview && snapshot && step === 0 ? (
+          {preview && snapshot && step === 0 && preview.isCatchUp && preview.alreadyEnded ? (
+            <div className="mt-4 flex flex-col gap-4">
+              <p className="text-[14px] text-tk-ink-2">
+                <span className="font-medium text-tk-ink">{preview.closeDay}</span> is
+                already closed. You can continue with your morning rundown.
+              </p>
+              <button
+                type="button"
+                className="btn-primary w-full py-3"
+                onClick={() => {
+                  onOpenChange(false);
+                  onSuccess?.();
+                  router.refresh();
+                }}
+              >
+                Continue
+              </button>
+            </div>
+          ) : null}
+
+          {preview && snapshot && step === 0 && !(preview.isCatchUp && preview.alreadyEnded) ? (
             <div className="mt-4 flex flex-col gap-4">
               <div className="rounded-xl bg-tk-surface-2 p-4 text-center">
-                <div className="eyebrow">Today</div>
+                <div className="eyebrow">
+                  {preview.isCatchUp ? preview.closeDay : "Today"}
+                </div>
                 <div className="mono text-[42px] font-semibold leading-none text-tk-honey">
                   {snapshot.productivityScore}
                 </div>
@@ -116,7 +259,7 @@ export function EndDayDialog({
                 className="text-left text-[12px] text-tk-ink-3 underline"
                 onClick={() => setBreakdownOpen((o) => !o)}
               >
-                {breakdownOpen ? "Hide" : "Show"} breakdown
+                {breakdownOpen ? "Hide" : "Show"} score breakdown
               </button>
               {breakdownOpen ? (
                 <ul className="flex flex-col gap-1 text-[12px] text-tk-ink-2">
@@ -134,7 +277,53 @@ export function EndDayDialog({
               <div className="text-[13px] text-tk-ink-2">
                 Goal hit: {snapshot.goalHitPercent}% · Credits:{" "}
                 {formatCredits(snapshot.creditsEarned)} earned
+                {preview.overwork.minutes > 0 ? (
+                  <span className="mt-1 block text-tk-amber">
+                    Overwork {preview.overwork.label}: +
+                    {formatCredits(preview.overwork.projectedCreditBonus)} credits
+                    ({preview.overwork.creditsPercent}% split),{" "}
+                    {formatOverworkMinutes(preview.overwork.projectedBankMinutes)}{" "}
+                    to freeze bank
+                  </span>
+                ) : null}
               </div>
+              {snapshot.categoryGoals.length > 0 ? (
+                <div>
+                  <div className="eyebrow mb-2">Time by category</div>
+                  <ul className="flex flex-col gap-1.5 text-[12px]">
+                    {snapshot.categoryGoals.map((g) => (
+                      <li
+                        key={g.categoryId}
+                        className="flex justify-between gap-2 text-tk-ink-2"
+                      >
+                        <span style={{ color: g.color }}>{g.categoryName}</span>
+                        <span className="mono text-tk-ink">
+                          {g.actualMinutes}/{g.targetMinutes}m · {g.hitPercent}%
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {habits.length > 0 ? (
+                <div>
+                    <div className="eyebrow mb-2">Habits</div>
+                  <ul className="flex flex-col gap-1 text-[12px]">
+                    {habits.map((h) => (
+                      <li
+                        key={h.id}
+                        className={h.hit ? "text-tk-green" : "text-tk-red/90"}
+                      >
+                        {h.hit ? "✓" : "○"} {h.name}{" "}
+                        <span className="text-tk-ink-4">
+                          ({h.count}/{h.targetPerDay}
+                          {h.freezeUsed ? " ❄" : ""})
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
               <button
                 type="button"
                 className="btn-primary w-full py-3"
@@ -147,46 +336,90 @@ export function EndDayDialog({
 
           {preview && step === 1 ? (
             <div className="mt-4 flex flex-col gap-3">
-              <p className="text-[13px] text-tk-ink-2">Incomplete for today</p>
-              {incomplete.map((t) => (
-                <div key={t.id} className="card p-3">
-                  <div className="font-medium text-tk-ink">{t.title}</div>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      className="btn-ghost px-2 py-1 text-[11px]"
-                      onClick={() =>
-                        setResolutions((r) => ({
-                          ...r,
-                          [t.id]: { taskId: t.id, action: "tomorrow" },
-                        }))
-                      }
-                    >
-                      Tomorrow
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-ghost px-2 py-1 text-[11px] text-tk-warn"
-                      onClick={() =>
-                        setResolutions((r) => ({
-                          ...r,
-                          [t.id]: {
-                            taskId: t.id,
-                            action: "drop",
-                            reason: "End day drop",
-                          },
-                        }))
-                      }
-                    >
-                      Drop
-                    </button>
+              <p className="text-[13px] text-tk-ink-2">Incomplete for this day</p>
+              {incomplete.map((t) => {
+                const r = resolutions[t.id];
+                const isDrop = r?.action === "drop";
+                const isDate = r?.action === "date";
+                return (
+                  <div key={t.id} className="card p-3">
+                    <div className="font-medium text-tk-ink">{t.title}</div>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        className={resolutionChipClass(r?.action === "tomorrow")}
+                        onClick={() => setAction(t.id, "tomorrow")}
+                      >
+                        Tomorrow
+                      </button>
+                      <button
+                        type="button"
+                        className={resolutionChipClass(isDate)}
+                        onClick={() => {
+                          const d =
+                            pickDates[t.id] ?? preview.nextDay ?? "";
+                          setPickDates((p) => ({ ...p, [t.id]: d }));
+                          setAction(t.id, "date", d);
+                        }}
+                      >
+                        Pick date
+                      </button>
+                      <button
+                        type="button"
+                        className={resolutionChipClass(isDrop, "danger")}
+                        onClick={() => setAction(t.id, "drop")}
+                      >
+                        Drop
+                      </button>
+                    </div>
+                    {isDate ? (
+                      <input
+                        type="date"
+                        className="mt-2 w-full rounded-lg border border-tk-line bg-tk-surface-2 px-2 py-1.5 text-[12px] text-tk-ink"
+                        value={pickDates[t.id] ?? r?.date ?? preview.nextDay}
+                        onChange={(e) => {
+                          setPickDates((p) => ({
+                            ...p,
+                            [t.id]: e.target.value,
+                          }));
+                          setAction(t.id, "date", e.target.value);
+                        }}
+                      />
+                    ) : null}
+                    {isDrop || dropDrafts[t.id] !== undefined ? (
+                      <textarea
+                        className="mt-2 w-full rounded-lg border border-tk-line bg-tk-surface-2 px-2 py-1.5 text-[12px] text-tk-ink"
+                        rows={2}
+                        placeholder="Why drop? (required)"
+                        value={dropDrafts[t.id] ?? ""}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setDropDrafts((p) => ({ ...p, [t.id]: v }));
+                          setResolutions((res) => ({
+                            ...res,
+                            [t.id]: {
+                              taskId: t.id,
+                              action: "drop",
+                              reason: v,
+                            },
+                          }));
+                        }}
+                      />
+                    ) : null}
                   </div>
-                </div>
-              ))}
+                );
+              })}
               <button
                 type="button"
                 className="btn-primary w-full py-2"
-                onClick={() => setStep(2)}
+                onClick={() => {
+                  const err = validateIncomplete();
+                  if (err) {
+                    toast.error(err);
+                    return;
+                  }
+                  setStep(2);
+                }}
               >
                 Next
               </button>
@@ -224,7 +457,7 @@ export function EndDayDialog({
                 />
               </label>
               <label className="text-[12px] text-tk-ink-2">
-                Tomorrow&apos;s top 3
+                {preview.isCatchUp ? "Today's" : "Tomorrow's"} top 3
                 <select
                   multiple
                   className="mt-1 h-24 w-full rounded-xl border border-tk-line bg-tk-surface-2 px-2 py-1 text-[12px] text-tk-ink"
@@ -249,7 +482,7 @@ export function EndDayDialog({
                 disabled={pending || preview.alreadyEnded}
                 onClick={() => void onSubmit()}
               >
-                {preview.alreadyEnded ? "Already ended" : "Close the day"}
+                {preview.alreadyEnded ? "Already closed" : "Close the day"}
               </button>
             </div>
           ) : null}

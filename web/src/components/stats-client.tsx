@@ -8,6 +8,8 @@ import type {
   getStatsPageData,
   TimeBlockHistoryRow,
 } from "@/actions/stats";
+import { MonthRecapPanel } from "@/components/month-recap-panel";
+import { ScoreTrendChart } from "@/components/score-trend-chart";
 import { formatCredits } from "@/lib/credits";
 import { qualityLabel } from "@/lib/quality";
 
@@ -246,7 +248,6 @@ function HistorySection({
 }
 
 export function StatsClient({ data }: { data: StatsData }) {
-  const max = Math.max(100, ...data.trend.map((t) => t.score), 1);
   const tz = data.timezone;
 
   return (
@@ -254,14 +255,23 @@ export function StatsClient({ data }: { data: StatsData }) {
       <div>
         <h1 className="text-xl font-semibold text-tk-ink">Stats</h1>
         <p className="mt-1 text-[13px] text-tk-ink-3">
-          Scores, trends, and your last {data.historyDays} days of history.
+          Monthly recap and your last {data.historyDays} days of history.
         </p>
       </div>
+
+      <MonthRecapPanel title="Month" />
 
       <div className="card p-4">
         <div className="eyebrow">Credits (all time)</div>
         <div className="mono mt-1 text-[24px] font-semibold text-tk-honey">
           {formatCredits(data.creditBalance)}
+        </div>
+      </div>
+
+      <div className="card p-4">
+        <div className="eyebrow">Productivity (14 days)</div>
+        <div className="mt-3">
+          <ScoreTrendChart trend={data.trend} rollingAvg={data.rollingAvg} />
         </div>
       </div>
 
@@ -280,27 +290,17 @@ export function StatsClient({ data }: { data: StatsData }) {
         ) : null}
       </div>
 
-      {data.trend.length > 0 ? (
+      {data.retirementPatterns.length > 0 ? (
         <div className="card p-4">
-          <div className="eyebrow">Recent days</div>
-          <ul className="mt-3 flex flex-col gap-2">
-            {data.trend.map((t) => (
-              <li key={t.date} className="flex items-center gap-3">
-                <span className="w-14 shrink-0 text-[11px] text-tk-ink-4">
-                  {t.date.slice(5)}
-                </span>
-                <div
-                  className="h-2 flex-1 overflow-hidden rounded-full bg-tk-surface-2"
-                  role="presentation"
-                >
-                  <div
-                    className="h-full rounded-full bg-tk-honey"
-                    style={{ width: `${(t.score / max) * 100}%` }}
-                  />
-                </div>
-                <span className="mono w-8 text-right text-[12px] text-tk-ink">
-                  {t.score}
-                </span>
+          <h2 className="eyebrow text-tk-ink-4">Retirement patterns</h2>
+          <ul className="mt-2 flex flex-col gap-2">
+            {data.retirementPatterns.map((r) => (
+              <li
+                key={r.label}
+                className="flex justify-between gap-2 text-[13px] text-tk-ink-2"
+              >
+                <span className="line-clamp-2">{r.label}</span>
+                <span className="mono shrink-0 text-tk-ink-4">×{r.count}</span>
               </li>
             ))}
           </ul>
