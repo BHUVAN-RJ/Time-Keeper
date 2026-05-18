@@ -45,4 +45,4 @@ jobs:
           AUTH_URL: http://localhost:3000
           AUTH_TRUST_HOST: "true"
           RESEND_API_KEY: re_placeholder
-          AUTH_RESEND_FROM: onboarding@resend.dev
+          AUTH_RESEND_FROM: Time Keeper <auth@mail.bhuvanrj.me>
