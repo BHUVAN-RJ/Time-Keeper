@@ -1,6 +1,7 @@
 "use client";
 
 import { Square, X } from "lucide-react";
+import { useEffect, useRef } from "react";
 import { ProjectPicker } from "@/components/project-picker";
 import { QualityPicker } from "@/components/quality-picker";
 import type { ProjectOption } from "@/components/project-picker";
@@ -10,6 +11,7 @@ type Running = {
   id: string;
   categoryName: string;
   label: string | null;
+  statedIntent?: string | null;
   categoryId: string;
   quality: string | null;
 };
@@ -19,6 +21,7 @@ export function FocusModeView({
   clock,
   stopOpen,
   setStopOpen,
+  stopLabel,
   setStopLabel,
   stopQuality,
   setStopQuality,
@@ -42,9 +45,17 @@ export function FocusModeView({
   stopProjectId: string;
   setStopProjectId: (v: string) => void;
 }) {
+  const labelRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!stopOpen) return;
+    const t = window.setTimeout(() => labelRef.current?.focus(), 0);
+    return () => window.clearTimeout(t);
+  }, [stopOpen]);
+
   function openStopModal() {
     onOpenStop?.();
-    setStopLabel(running.label ?? "");
+    setStopLabel(running.label ?? running.statedIntent ?? "");
     setStopQuality(normalizeQuality(running.quality) ?? "useful");
     setStopOpen(true);
   }
@@ -118,10 +129,17 @@ export function FocusModeView({
                 </button>
               </div>
               <div className="mt-4 flex flex-col gap-3">
-                <p className="text-[12px] text-tk-ink-3">
-                  {running.categoryName}
-                  {running.label ? ` · ${running.label}` : ""}
-                </p>
+                <p className="text-[12px] text-tk-ink-3">{running.categoryName}</p>
+                <label className="text-[12px] text-tk-ink-2">
+                  Label
+                  <input
+                    ref={labelRef}
+                    className="mt-1 w-full rounded-xl border border-tk-line bg-tk-surface-2 px-3 py-2 text-tk-ink"
+                    value={stopLabel}
+                    onChange={(e) => setStopLabel(e.target.value)}
+                    placeholder="What did you work on?"
+                  />
+                </label>
                 <ProjectPicker
                   projects={activeProjects}
                   value={stopProjectId}

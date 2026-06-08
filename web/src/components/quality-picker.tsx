@@ -1,7 +1,7 @@
 "use client";
 
 import type { Quality } from "@/lib/quality";
-import { CHORES_HINT, MEH_HINT, QUALITY_OPTIONS } from "@/lib/quality";
+import { MEH_HINT, QUALITY_OPTIONS } from "@/lib/quality";
 
 export function QualityPicker({
   value,
@@ -30,9 +30,6 @@ export function QualityPicker({
           </button>
         ))}
       </div>
-      {value === "chores" ? (
-        <p className="mt-1.5 text-[11px] text-tk-ink-4">{CHORES_HINT}</p>
-      ) : null}
       {value === "meh" ? (
         <p className="mt-1.5 text-[11px] text-tk-ink-4">{MEH_HINT}</p>
       ) : null}

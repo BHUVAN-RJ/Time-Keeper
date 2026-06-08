@@ -20,9 +20,11 @@ export type BlockActionResult =
   | { ok: true }
   | { ok: false; error: string };
 import {
+  businessDayInTz,
   businessDayStartUtc,
   getBusinessDayRangeUtc,
 } from "@/lib/day-boundary";
+import { parseRemindAtLocal } from "@/lib/reminders";
 import { ensureDefaultCategories } from "@/lib/ensure-categories";
 import { listActiveProjects } from "@/actions/projects";
 import {
@@ -47,6 +49,7 @@ export type TodayBlockRow = {
   startAt: string;
   endAt: string | null;
   label: string | null;
+  statedIntent?: string | null;
   quality: string | null;
   manualEntry: boolean;
   categoryId: string;
@@ -149,6 +152,7 @@ export async function getTodayData(): Promise<{
       startAt: new Date(block.startAt).toISOString(),
       endAt: block.endAt ? new Date(block.endAt).toISOString() : null,
       label: block.label,
+      statedIntent: block.statedIntent ?? null,
       quality: block.quality,
       manualEntry: block.manualEntry,
       categoryId: cat.id,
@@ -414,10 +418,9 @@ export async function stopBlockAction(input: {
   }
 
   const categoryId = input.categoryId.trim() || running.categoryId;
-  // Label is no longer a required separate field; classification is the Label
-  // (categoryId). Preserve any prior label text for historical continuity.
   const label = (input.label ?? "").trim() || running.label || null;
   if (!categoryId) throw new Error("Label is required");
+  if (!label) throw new Error("Label is required");
 
   const [cat] = await db
     .select()
@@ -545,19 +548,35 @@ export async function startBlockForTaskAction(taskId: string) {
   return startBlockAction(categoryId, taskId);
 }
 
+function isHm(value: string): boolean {
+  return /^\d{2}:\d{2}$/.test(value.trim());
+}
+
 export async function createManualBlockAction(input: {
   categoryId: string;
-  startAt: string;
-  endAt: string;
+  startTime: string;
+  endTime: string;
   label: string;
   quality: Quality;
   notes?: string;
   projectId?: string | null;
   tagIds?: string[];
 }): Promise<BlockActionResult> {
-  const { userId } = await requireUser();
-  const start = new Date(input.startAt);
-  const end = new Date(input.endAt);
+  const { userId, timezone } = await requireUser();
+  const startTime = input.startTime.trim();
+  const endTime = input.endTime.trim();
+  if (!isHm(startTime) || !isHm(endTime)) {
+    return { ok: false, error: "Pick valid start and end times." };
+  }
+  const businessDay = businessDayInTz(new Date(), timezone);
+  let start: Date;
+  let end: Date;
+  try {
+    start = parseRemindAtLocal(`${businessDay}T${startTime}`, timezone);
+    end = parseRemindAtLocal(`${businessDay}T${endTime}`, timezone);
+  } catch {
+    return { ok: false, error: "Pick valid start and end times." };
+  }
   if (!(end > start)) {
     return { ok: false, error: "End time must be after start time." };
   }

@@ -8,6 +8,7 @@ import {
   timeBlocks,
 } from "@/db/schema";
 import { overlapMinutes } from "@/lib/block-minutes";
+import { CHORES_CATEGORY_NAME } from "@/lib/default-categories";
 import { normalizeQuality, qualityCreditMultiplier } from "@/lib/quality";
 import { getDayRangeUtc } from "@/lib/day-range";
 import { goalsForDay } from "@/lib/ensure-schedule-goals";
@@ -164,7 +165,7 @@ function qualityScore(rows: BlockRow[], date: string, timezone: string) {
   let chores = 0;
   let meh = 0;
   let wasted = 0;
-  for (const { block } of rows) {
+  for (const { block, category } of rows) {
     if (!block.endAt || !block.quality) continue;
     const q = normalizeQuality(block.quality);
     if (!q) continue;
@@ -174,10 +175,15 @@ function qualityScore(rows: BlockRow[], date: string, timezone: string) {
       startUtc,
       endUtc,
     );
-    if (q === "useful") useful += mins;
-    else if (q === "chores") chores += mins;
-    else if (q === "meh") meh += mins;
-    else wasted += mins;
+    if (q === "wasted") {
+      wasted += mins;
+    } else if (category.name === CHORES_CATEGORY_NAME || block.quality === "chores") {
+      chores += mins;
+    } else if (q === "useful") {
+      useful += mins;
+    } else {
+      meh += mins;
+    }
   }
   const denom = useful + chores + meh + wasted;
   if (denom <= 0) return 100;

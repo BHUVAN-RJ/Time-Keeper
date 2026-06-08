@@ -324,7 +324,7 @@ export const timeBlocks = sqliteTable(
     startAt: integer("start_at", { mode: "timestamp_ms" }).notNull(),
     endAt: integer("end_at", { mode: "timestamp_ms" }),
     label: text("label"),
-    quality: text("quality"), // useful | chores | meh | wasted | null while running
+    quality: text("quality"), // useful | meh | wasted | null while running
     notes: text("notes"),
     manualEntry: integer("manual_entry", { mode: "boolean" }).notNull().default(false),
     taskId: text("task_id").references(() => tasks.id, { onDelete: "set null" }),

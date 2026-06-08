@@ -57,6 +57,18 @@ function fmt(iso: string, tz: string) {
   }).format(new Date(iso));
 }
 
+function formatTimeInTz(date: Date, tz: string): string {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: tz,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(date);
+  const h = parts.find((p) => p.type === "hour")?.value ?? "00";
+  const m = parts.find((p) => p.type === "minute")?.value ?? "00";
+  return `${h}:${m}`;
+}
+
 function splitElapsed(totalSec: number) {
   const s = Math.max(0, Math.floor(totalSec));
   const hh = String(Math.floor(s / 3600)).padStart(2, "0");
@@ -273,6 +285,7 @@ export function TodayClient({
 
   const [manualStart, setManualStart] = useState("");
   const [manualEnd, setManualEnd] = useState("");
+  const manualStartRef = useRef<HTMLInputElement>(null);
   const [manualLabel, setManualLabel] = useState("");
   const [manualCat, setManualCat] = useState("");
   const [manualQuality, setManualQuality] = useState<Quality>("useful");
@@ -282,6 +295,12 @@ export function TodayClient({
   const [stopTagIds, setStopTagIds] = useState<string[]>([]);
   const [manualTagIds, setManualTagIds] = useState<string[]>([]);
   const [offDayCheckOpen, setOffDayCheckOpen] = useState(false);
+
+  useEffect(() => {
+    if (!manualOpen) return;
+    const t = window.setTimeout(() => manualStartRef.current?.focus(), 0);
+    return () => window.clearTimeout(t);
+  }, [manualOpen]);
   const [offDaysIn30, setOffDaysIn30] = useState(0);
 
   useEffect(() => {
@@ -359,6 +378,10 @@ export function TodayClient({
 
   async function onStopSubmit() {
     if (!running) return;
+    if (!stopLabel.trim()) {
+      toast.error("Label is required.");
+      return;
+    }
     const categoryId = stopCat || running.categoryId;
     if (!categoryId) {
       toast.error("Label is required.");
@@ -397,8 +420,8 @@ export function TodayClient({
     }
     const res = await createManualBlockAction({
       categoryId: manualCat,
-      startAt: manualStart,
-      endAt: manualEnd,
+      startTime: manualStart,
+      endTime: manualEnd,
       label: manualLabel,
       quality: manualQuality,
       projectId: manualProjectId || null,
@@ -452,6 +475,16 @@ export function TodayClient({
 
   const todayLabel = data.calendarHeadline;
 
+  function openStopDialog() {
+    if (!running) return;
+    setStopCat(running.categoryId);
+    setStopLabel(running.label ?? running.statedIntent ?? "");
+    setStopQuality(normalizeQuality(running.quality) ?? "useful");
+    setStopProjectId("");
+    setStopTagIds([]);
+    setStopOpen(true);
+  }
+
   async function onMarkOffDay() {
     const res = await markOffDayAction();
     if (!res.ok && res.needsCheckIn) {
@@ -470,9 +503,7 @@ export function TodayClient({
       <AmRundownModal
         data={amRundown}
         runningBlockId={running?.id ?? null}
-        onNeedStop={() => {
-          if (running) setStopOpen(true);
-        }}
+        onNeedStop={openStopDialog}
       />
       <TodayScoreWidget />
       {running ? (
@@ -517,9 +548,7 @@ export function TodayClient({
         extras={extras}
         runningBlockId={running?.id ?? null}
         yesterdayNeedsClose={amRundown.mode === "unclosed"}
-        onNeedStop={() => {
-          if (running) setStopOpen(true);
-        }}
+        onNeedStop={openStopDialog}
       />
 
       <TodayPinnedTop3 items={extras.pinnedTop3} />
@@ -652,13 +681,8 @@ export function TodayClient({
                 className="btn-ghost flex items-center gap-1 px-3 py-2 text-[12px]"
                 onClick={() => {
                   const now = new Date();
-                  const end = new Date(now.getTime() + 3600_000);
-                  const toLocal = (d: Date) => {
-                    const pad = (n: number) => String(n).padStart(2, "0");
-                    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-                  };
-                  setManualStart(toLocal(now));
-                  setManualEnd(toLocal(end));
+                  setManualStart(formatTimeInTz(now, tz));
+                  setManualEnd(formatTimeInTz(new Date(now.getTime() + 3600_000), tz));
                   setManualCat(activeCats[0]?.id ?? "");
                 }}
               >
@@ -671,25 +695,31 @@ export function TodayClient({
                 <Dialog.Title className="text-lg font-semibold text-tk-ink">
                   Manual block
                 </Dialog.Title>
+                <p className="mt-1 text-[12px] text-tk-ink-3">
+                  For today · {todayLabel}
+                </p>
                 <div className="mt-4 flex flex-col gap-3">
-                  <label className="text-[12px] text-tk-ink-2">
-                    Start
-                    <input
-                      type="datetime-local"
-                      className="mt-1 w-full rounded-xl border border-tk-line bg-tk-surface-2 px-3 py-2 text-tk-ink"
-                      value={manualStart}
-                      onChange={(e) => setManualStart(e.target.value)}
-                    />
-                  </label>
-                  <label className="text-[12px] text-tk-ink-2">
-                    End
-                    <input
-                      type="datetime-local"
-                      className="mt-1 w-full rounded-xl border border-tk-line bg-tk-surface-2 px-3 py-2 text-tk-ink"
-                      value={manualEnd}
-                      onChange={(e) => setManualEnd(e.target.value)}
-                    />
-                  </label>
+                  <div className="grid grid-cols-2 gap-3">
+                    <label className="text-[12px] text-tk-ink-2">
+                      Start time
+                      <input
+                        ref={manualStartRef}
+                        type="time"
+                        className="mt-1 w-full rounded-xl border border-tk-line bg-tk-surface-2 px-3 py-2 text-tk-ink"
+                        value={manualStart}
+                        onChange={(e) => setManualStart(e.target.value)}
+                      />
+                    </label>
+                    <label className="text-[12px] text-tk-ink-2">
+                      End time
+                      <input
+                        type="time"
+                        className="mt-1 w-full rounded-xl border border-tk-line bg-tk-surface-2 px-3 py-2 text-tk-ink"
+                        value={manualEnd}
+                        onChange={(e) => setManualEnd(e.target.value)}
+                      />
+                    </label>
+                  </div>
                   <label className="text-[12px] text-tk-ink-2">
                     Category
                     <select

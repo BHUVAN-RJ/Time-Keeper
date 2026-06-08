@@ -3,6 +3,7 @@ export const DEFAULT_SCHEDULE_GOALS: Record<string, number> = {
   "Deep work": 120,
   "Regular work": 240,
   "Admin / shallow": 60,
+  Chores: 60,
   "Learning": 60,
   Exercise: 30,
   Sleep: 0,
