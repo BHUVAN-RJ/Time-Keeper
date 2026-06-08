@@ -99,6 +99,13 @@
       "when": 1780514371625,
       "tag": "0013_day_rollover_wasted_time",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1780600000000,
+      "tag": "0014_project_completed",
+      "breakpoints": true
     }
   ]
 }

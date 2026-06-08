@@ -111,9 +111,12 @@ export const projects = sqliteTable("projects", {
     .references(() => users.id, { onDelete: "cascade" }),
   name: text("name").notNull(),
   description: text("description"),
-  status: text("status", { enum: ["active", "paused", "retired"] })
+  status: text("status", {
+    enum: ["active", "paused", "completed", "retired"],
+  })
     .notNull()
     .default("active"),
+  completedAt: integer("completed_at", { mode: "timestamp_ms" }),
   retiredAt: integer("retired_at", { mode: "timestamp_ms" }),
   retiredReason: text("retired_reason"),
   createdAt: integer("created_at", { mode: "timestamp_ms" })

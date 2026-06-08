@@ -105,11 +105,30 @@ export async function updateProjectAction(input: {
       name,
       description: input.description?.trim() || null,
       status: input.status,
+      completedAt: null,
       retiredReason:
         input.status === "retired" ? input.retiredReason?.trim() ?? null : null,
       retiredAt: input.status === "retired" ? now : null,
     })
     .where(and(eq(projects.id, input.id), eq(projects.userId, userId)));
+  revalidatePath("/projects");
+  revalidatePath("/tasks");
+  revalidatePath("/today");
+  revalidatePath("/stats");
+}
+
+export async function completeProjectAction(id: string) {
+  const { userId } = await requireUser();
+  const now = new Date();
+  await db
+    .update(projects)
+    .set({
+      status: "completed",
+      completedAt: now,
+      retiredAt: null,
+      retiredReason: null,
+    })
+    .where(and(eq(projects.id, id), eq(projects.userId, userId)));
   revalidatePath("/projects");
   revalidatePath("/tasks");
   revalidatePath("/today");

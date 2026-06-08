@@ -1,9 +1,10 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
+  completeProjectAction,
   createProjectAction,
   listProjects,
   updateProjectAction,
@@ -18,6 +19,18 @@ export function ProjectsClient({ embedded = false }: { embedded?: boolean }) {
   });
   const [name, setName] = useState("");
   const [desc, setDesc] = useState("");
+
+  const { active, completed, retired } = useMemo(() => {
+    const active: ProjectListRow[] = [];
+    const completed: ProjectListRow[] = [];
+    const retired: ProjectListRow[] = [];
+    for (const p of rows) {
+      if (p.status === "completed") completed.push(p);
+      else if (p.status === "retired") retired.push(p);
+      else active.push(p);
+    }
+    return { active, completed, retired };
+  }, [rows]);
 
   async function onCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -70,12 +83,58 @@ export function ProjectsClient({ embedded = false }: { embedded?: boolean }) {
         </button>
       </form>
 
-      <ul className="flex flex-col gap-2">
-        {rows.map((p) => (
-          <ProjectCard key={p.id} project={p} onSaved={refetch} />
-        ))}
-      </ul>
+      {active.length === 0 ? (
+        <p className="text-[13px] text-tk-ink-3">No active projects.</p>
+      ) : (
+        <ul className="flex flex-col gap-2">
+          {active.map((p) => (
+            <ProjectCard key={p.id} project={p} onSaved={refetch} />
+          ))}
+        </ul>
+      )}
+
+      {completed.length > 0 ? (
+        <ProjectsArchiveSection title="Completed projects" count={completed.length}>
+          <ul className="flex flex-col gap-2">
+            {completed.map((p) => (
+              <CompletedProjectCard key={p.id} project={p} onSaved={refetch} />
+            ))}
+          </ul>
+        </ProjectsArchiveSection>
+      ) : null}
+
+      {retired.length > 0 ? (
+        <ProjectsArchiveSection title="Retired projects" count={retired.length}>
+          <ul className="flex flex-col gap-2">
+            {retired.map((p) => (
+              <ProjectCard key={p.id} project={p} onSaved={refetch} />
+            ))}
+          </ul>
+        </ProjectsArchiveSection>
+      ) : null}
     </div>
+  );
+}
+
+function ProjectsArchiveSection({
+  title,
+  count,
+  children,
+}: {
+  title: string;
+  count: number;
+  children: React.ReactNode;
+}) {
+  return (
+    <details className="card overflow-hidden">
+      <summary className="eyebrow cursor-pointer list-none px-4 py-3 [&::-webkit-details-marker]:hidden">
+        <span className="flex items-center justify-between">
+          {title}
+          <span className="text-[11px] font-normal text-tk-ink-3">{count}</span>
+        </span>
+      </summary>
+      <div className="border-t border-tk-line px-4 pb-4 pt-3">{children}</div>
+    </details>
   );
 }
 
@@ -88,12 +147,23 @@ function formatTrackedMinutes(minutes: number): string {
   return `${h}h ${m}m`;
 }
 
+function formatCompletedAt(date: Date | null): string {
+  if (!date) return "";
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(date);
+}
+
 function projectCardClass(status: ProjectListRow["status"]) {
   switch (status) {
     case "active":
       return "card border border-tk-green/35 bg-tk-green/10 ring-1 ring-tk-green/20";
     case "paused":
       return "card border border-tk-amber/35 bg-tk-amber/10 ring-1 ring-tk-amber/20";
+    case "completed":
+      return "card border border-tk-honey/35 bg-tk-honey/10 ring-1 ring-tk-honey/20";
     case "retired":
       return "card border border-tk-red/35 bg-tk-red/10 ring-1 ring-tk-red/20";
     default:
@@ -130,13 +200,25 @@ function ProjectCard({
     await onSaved();
   }
 
+  async function onComplete() {
+    await completeProjectAction(project.id);
+    toast.success("Project completed");
+    await onSaved();
+  }
+
   function cancelRetire() {
     setRetireOpen(false);
     setReason(project.retiredReason ?? "");
   }
 
   const statusLabel =
-    status === "active" ? "Active" : status === "paused" ? "Paused" : "Retired";
+    status === "active"
+      ? "Active"
+      : status === "paused"
+        ? "Paused"
+        : status === "completed"
+          ? "Completed"
+          : "Retired";
 
   const trackedLabel = formatTrackedMinutes(project.trackedMinutes);
 
@@ -154,7 +236,9 @@ function ProjectCard({
                 ? "text-tk-green"
                 : status === "paused"
                   ? "text-tk-amber"
-                  : "text-tk-red"
+                  : status === "completed"
+                    ? "text-tk-honey"
+                    : "text-tk-red"
             }`}
           >
             {statusLabel}
@@ -174,33 +258,42 @@ function ProjectCard({
       ) : null}
       <div className="mt-3 flex flex-col gap-2">
         <div className="flex flex-wrap gap-2">
-        {status !== "active" ? (
-          <button
-            type="button"
-            className="btn-ghost text-[12px]"
-            onClick={() => void saveStatus("active")}
-          >
-            Activate
-          </button>
-        ) : null}
-        {status !== "paused" ? (
-          <button
-            type="button"
-            className="btn-ghost text-[12px]"
-            onClick={() => void saveStatus("paused")}
-          >
-            Pause
-          </button>
-        ) : null}
-        {status !== "retired" && !retireOpen ? (
-          <button
-            type="button"
-            className="btn-ghost text-[12px] text-tk-red"
-            onClick={() => setRetireOpen(true)}
-          >
-            Retire
-          </button>
-        ) : null}
+          {status !== "active" ? (
+            <button
+              type="button"
+              className="btn-ghost text-[12px]"
+              onClick={() => void saveStatus("active")}
+            >
+              Activate
+            </button>
+          ) : null}
+          {status !== "paused" ? (
+            <button
+              type="button"
+              className="btn-ghost text-[12px]"
+              onClick={() => void saveStatus("paused")}
+            >
+              Pause
+            </button>
+          ) : null}
+          {status !== "retired" && status !== "completed" && !retireOpen ? (
+            <>
+              <button
+                type="button"
+                className="btn-primary px-3 py-1.5 text-[12px]"
+                onClick={() => void onComplete()}
+              >
+                Done
+              </button>
+              <button
+                type="button"
+                className="btn-ghost text-[12px] text-tk-red"
+                onClick={() => setRetireOpen(true)}
+              >
+                Retire
+              </button>
+            </>
+          ) : null}
         </div>
         {retireOpen ? (
           <div className="flex flex-col gap-2 border-t border-tk-line pt-2">
@@ -233,6 +326,65 @@ function ProjectCard({
             </div>
           </div>
         ) : null}
+      </div>
+    </li>
+  );
+}
+
+function CompletedProjectCard({
+  project,
+  onSaved,
+}: {
+  project: ProjectListRow;
+  onSaved: () => Promise<unknown>;
+}) {
+  const trackedLabel = formatTrackedMinutes(project.trackedMinutes);
+  const completedLabel = formatCompletedAt(project.completedAt);
+
+  async function reactivate() {
+    await updateProjectAction({
+      id: project.id,
+      name: project.name,
+      description: project.description,
+      status: "active",
+    });
+    toast.success("Project reactivated");
+    await onSaved();
+  }
+
+  return (
+    <li className={`${projectCardClass("completed")} p-4`}>
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <p className="font-medium text-tk-ink">{project.name}</p>
+          {project.description ? (
+            <p className="mt-1 text-[13px] text-tk-ink-2">{project.description}</p>
+          ) : null}
+          {completedLabel ? (
+            <p className="mt-2 text-[11px] text-tk-ink-3">Completed {completedLabel}</p>
+          ) : null}
+        </div>
+        <div className="shrink-0 text-right">
+          {trackedLabel ? (
+            <>
+              <p className="mono text-[17px] font-semibold leading-none text-tk-ink">
+                {trackedLabel}
+              </p>
+              <p className="mt-0.5 text-[10px] text-tk-ink-4">tracked</p>
+            </>
+          ) : (
+            <span className="text-[11px] text-tk-honey">Done</span>
+          )}
+        </div>
+      </div>
+      <div className="mt-3">
+        <button
+          type="button"
+          className="btn-ghost text-[12px]"
+          onClick={() => void reactivate()}
+        >
+          Reactivate
+        </button>
       </div>
     </li>
   );
