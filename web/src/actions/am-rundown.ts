@@ -6,7 +6,7 @@ import { categories, dailyReviews, dayStatus, tasks } from "@/db/schema";
 import { and, eq, inArray, or } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import { getTodayHabits } from "@/actions/habits";
-import { calendarDayInTz } from "@/lib/calendar-day";
+import { businessDayInTz as calendarDayInTz } from "@/lib/day-boundary";
 import {
   computeDaySnapshot,
   rollingProductivityAvg,

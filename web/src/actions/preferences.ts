@@ -87,13 +87,13 @@ export async function getTagsSettings() {
   return { enabled: await getTagsEnabledForUser(id) };
 }
 
-export async function getTagsEnabledForUser(userId: string): Promise<boolean> {
-  const [row] = await db
-    .select({ enabled: userPreferences.tagsEnabled })
-    .from(userPreferences)
-    .where(eq(userPreferences.userId, userId))
-    .limit(1);
-  return row?.enabled ?? true;
+export async function getTagsEnabledForUser(
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  userId: string,
+): Promise<boolean> {
+  // Tags were removed in favor of a single Label dimension (US8). The schema is
+  // retained for historical data, but tags no longer surface anywhere.
+  return false;
 }
 
 export async function getRemindersSettings() {
@@ -155,6 +155,58 @@ export async function setTagsEnabled(enabled: boolean) {
   revalidatePath("/today");
   revalidatePath("/tasks");
   revalidatePath("/month");
+}
+
+const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+export async function getActiveWindowForUser(
+  userId: string,
+): Promise<{ start: string; end: string }> {
+  const [row] = await db
+    .select({
+      start: userPreferences.activeWindowStart,
+      end: userPreferences.activeWindowEnd,
+    })
+    .from(userPreferences)
+    .where(eq(userPreferences.userId, userId))
+    .limit(1);
+  return { start: row?.start ?? "09:00", end: row?.end ?? "21:00" };
+}
+
+export async function getActiveWindowSettings() {
+  const session = await auth();
+  const id = session?.user?.id;
+  if (!id) throw new Error("Unauthorized");
+  return getActiveWindowForUser(id);
+}
+
+export async function setActiveWindowAction(
+  start: string,
+  end: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const session = await auth();
+  const id = session?.user?.id;
+  if (!id) throw new Error("Unauthorized");
+  if (!HHMM_RE.test(start) || !HHMM_RE.test(end)) {
+    return { ok: false, error: "Times must be in HH:MM (24h) format" };
+  }
+  const now = new Date();
+  await db
+    .insert(userPreferences)
+    .values({
+      userId: id,
+      activeWindowStart: start,
+      activeWindowEnd: end,
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: userPreferences.userId,
+      set: { activeWindowStart: start, activeWindowEnd: end, updatedAt: now },
+    });
+  revalidatePath("/settings");
+  revalidatePath("/today");
+  revalidatePath("/stats");
+  return { ok: true };
 }
 
 export async function setOverworkSplitPercent(percent: number) {

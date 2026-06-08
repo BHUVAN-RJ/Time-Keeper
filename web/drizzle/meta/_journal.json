@@ -92,6 +92,13 @@
       "when": 1779400000000,
       "tag": "0012_reminders_enabled_pref",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1780514371625,
+      "tag": "0013_day_rollover_wasted_time",
+      "breakpoints": true
     }
   ]
 }

@@ -3,8 +3,6 @@
 import { Square, X } from "lucide-react";
 import { ProjectPicker } from "@/components/project-picker";
 import { QualityPicker } from "@/components/quality-picker";
-import { TagPicker } from "@/components/tag-picker";
-import type { TagRow } from "@/lib/tag-utils";
 import type { ProjectOption } from "@/components/project-picker";
 import { normalizeQuality, type Quality } from "@/lib/quality";
 
@@ -21,7 +19,6 @@ export function FocusModeView({
   clock,
   stopOpen,
   setStopOpen,
-  stopLabel,
   setStopLabel,
   stopQuality,
   setStopQuality,
@@ -30,11 +27,6 @@ export function FocusModeView({
   activeProjects = [],
   stopProjectId,
   setStopProjectId,
-  tagsEnabled = true,
-  allTags = [],
-  stopTagIds = [],
-  setStopTagIds,
-  onTagsChange,
 }: {
   running: Running;
   clock: React.ReactNode;
@@ -49,11 +41,6 @@ export function FocusModeView({
   activeProjects?: ProjectOption[];
   stopProjectId: string;
   setStopProjectId: (v: string) => void;
-  tagsEnabled?: boolean;
-  allTags?: TagRow[];
-  stopTagIds?: string[];
-  setStopTagIds?: (v: string[]) => void;
-  onTagsChange?: (tags: TagRow[]) => void;
 }) {
   function openStopModal() {
     onOpenStop?.();
@@ -131,16 +118,10 @@ export function FocusModeView({
                 </button>
               </div>
               <div className="mt-4 flex flex-col gap-3">
-                <label className="text-[12px] text-tk-ink-2">
-                  Label
-                  <input
-                    className="mt-1 w-full rounded-xl border border-tk-line bg-tk-surface-2 px-3 py-2 text-tk-ink"
-                    value={stopLabel}
-                    onChange={(e) => setStopLabel(e.target.value)}
-                    placeholder="What did you do?"
-                    autoFocus
-                  />
-                </label>
+                <p className="text-[12px] text-tk-ink-3">
+                  {running.categoryName}
+                  {running.label ? ` · ${running.label}` : ""}
+                </p>
                 <ProjectPicker
                   projects={activeProjects}
                   value={stopProjectId}
@@ -153,14 +134,6 @@ export function FocusModeView({
                     onChange={setStopQuality}
                   />
                 </div>
-                {tagsEnabled && setStopTagIds ? (
-                  <TagPicker
-                    allTags={allTags}
-                    selectedIds={stopTagIds}
-                    onChange={setStopTagIds}
-                    onTagsChange={onTagsChange}
-                  />
-                ) : null}
               </div>
               <div className="mt-5 flex justify-end gap-2">
                 <button

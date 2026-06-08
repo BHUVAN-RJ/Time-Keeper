@@ -9,6 +9,7 @@ import {
   dropTaskAction,
   type TaskRow,
   scheduleTaskForTodayAction,
+  updateTaskAction,
 } from "@/actions/tasks";
 import { EisenhowerBoard } from "@/components/eisenhower-board";
 import { ProjectPicker } from "@/components/project-picker";
@@ -20,7 +21,7 @@ import {
   eisenhowerQuadrant,
 } from "@/lib/eisenhower";
 
-type Tab = "today" | "backlog" | "matrix";
+type Tab = "today" | "remaining" | "backlog" | "matrix";
 
 function TaskCard({
   task,
@@ -36,6 +37,19 @@ function TaskCard({
   const [dropOpen, setDropOpen] = useState(false);
   const [dropReason, setDropReason] = useState("");
   const [busy, setBusy] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editTitle, setEditTitle] = useState(task.title);
+  const [editEstimate, setEditEstimate] = useState(String(task.estimateMinutes));
+  const [editScheduled, setEditScheduled] = useState(task.scheduledDate ?? "");
+  const [editDue, setEditDue] = useState(task.dueDate ?? "");
+
+  function openEdit() {
+    setEditTitle(task.title);
+    setEditEstimate(String(task.estimateMinutes));
+    setEditScheduled(task.scheduledDate ?? "");
+    setEditDue(task.dueDate ?? "");
+    setEditOpen(true);
+  }
 
   async function run(fn: () => Promise<void>) {
     setBusy(true);
@@ -55,7 +69,11 @@ function TaskCard({
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="font-medium text-tk-ink">{task.title}</span>
+            <span
+              className={`font-medium ${task.status === "completed" ? "text-tk-ink-3 line-through" : "text-tk-ink"}`}
+            >
+              {task.title}
+            </span>
             <span className="rounded-md bg-tk-surface-2 px-1.5 py-0.5 text-[10px] font-medium text-tk-ink-3">
               {quadrantCode}
             </span>
@@ -132,12 +150,95 @@ function TaskCard({
         <button
           type="button"
           disabled={busy}
+          className="btn-ghost px-3 py-1.5 text-[12px]"
+          onClick={openEdit}
+        >
+          Edit
+        </button>
+        <button
+          type="button"
+          disabled={busy}
           className="btn-ghost px-3 py-1.5 text-[12px] text-tk-warn"
           onClick={() => setDropOpen((v) => !v)}
         >
           Drop
         </button>
       </div>
+      {editOpen ? (
+        <div className="flex flex-col gap-2 border-t border-tk-line pt-2">
+          <label className="text-[11px] text-tk-ink-3">
+            Title
+            <input
+              className="mt-1 w-full rounded-xl border border-tk-line bg-tk-surface-2 px-3 py-2 text-[13px] text-tk-ink"
+              value={editTitle}
+              onChange={(e) => setEditTitle(e.target.value)}
+            />
+          </label>
+          <div className="flex gap-2">
+            <label className="flex-1 text-[11px] text-tk-ink-3">
+              Estimate (min)
+              <input
+                type="number"
+                min={1}
+                className="mt-1 w-full rounded-xl border border-tk-line bg-tk-surface-2 px-3 py-2 text-[13px] text-tk-ink"
+                value={editEstimate}
+                onChange={(e) => setEditEstimate(e.target.value)}
+              />
+            </label>
+            <label className="flex-1 text-[11px] text-tk-ink-3">
+              Scheduled
+              <input
+                type="date"
+                className="mt-1 w-full rounded-xl border border-tk-line bg-tk-surface-2 px-3 py-2 text-[13px] text-tk-ink"
+                value={editScheduled}
+                onChange={(e) => setEditScheduled(e.target.value)}
+              />
+            </label>
+            <label className="flex-1 text-[11px] text-tk-ink-3">
+              Due
+              <input
+                type="date"
+                className="mt-1 w-full rounded-xl border border-tk-line bg-tk-surface-2 px-3 py-2 text-[13px] text-tk-ink"
+                value={editDue}
+                onChange={(e) => setEditDue(e.target.value)}
+              />
+            </label>
+          </div>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              disabled={busy}
+              className="btn-primary px-3 py-1.5 text-[12px]"
+              onClick={() =>
+                run(async () => {
+                  const res = await updateTaskAction(task.id, {
+                    title: editTitle,
+                    estimateMinutes: Number.parseInt(editEstimate, 10),
+                    scheduledDate: editScheduled || null,
+                    dueDate: editDue || null,
+                  });
+                  if (!res.ok) {
+                    toast.error(res.error);
+                    return;
+                  }
+                  setEditOpen(false);
+                  toast.success("Task updated");
+                })
+              }
+            >
+              Save
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              className="btn-ghost px-3 py-1.5 text-[12px]"
+              onClick={() => setEditOpen(false)}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : null}
       {dropOpen ? (
         <div className="flex flex-col gap-2 border-t border-tk-line pt-2">
           <input
@@ -176,6 +277,7 @@ function TaskTabs({
 }) {
   const tabs: { id: Tab; label: string }[] = [
     { id: "today", label: "Today" },
+    { id: "remaining", label: "Remaining" },
     { id: "backlog", label: "Backlog" },
     { id: "matrix", label: "Matrix" },
   ];
@@ -367,6 +469,27 @@ export function TasksClient({
           ) : (
             <ul className="flex flex-col gap-2">
               {initial.todayTasks.map((t) => (
+                <TaskCard
+                  key={t.id}
+                  task={t}
+                  today={initial.today}
+                  tagsEnabled={initial.tagsEnabled}
+                  onRefresh={refresh}
+                />
+              ))}
+            </ul>
+          )}
+        </section>
+      ) : null}
+
+      {tab === "remaining" ? (
+        <section>
+          <h2 className="eyebrow mb-2">Remaining tasks</h2>
+          {initial.remainingTasks.length === 0 ? (
+            <p className="text-[13px] text-tk-ink-3">No open tasks. All clear.</p>
+          ) : (
+            <ul className="flex flex-col gap-2">
+              {initial.remainingTasks.map((t) => (
                 <TaskCard
                   key={t.id}
                   task={t}

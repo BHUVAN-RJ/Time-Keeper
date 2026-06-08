@@ -292,38 +292,76 @@ export function TodayClient({
 
   async function onStart() {
     if (!startCat) {
-      toast.error("Add a category first.");
+      toast.error("Add a label first.");
       return;
     }
     const intent =
       isStartDeepWork && startIntent.trim() ? startIntent.trim() : null;
-    const res = await startBlockAction(startCat, null, intent);
-    if (!res.ok) {
-      toast.error("A block is already running. Stop it first.");
-      return;
+
+    // --- Optimistic, local-first start (US3) ---
+    // Transition to the focus screen immediately; sync to the server in the
+    // background. On failure we roll back and surface a recovery path.
+    const cat = activeCats.find((c) => c.id === startCat);
+    const nowIso = new Date().toISOString();
+    const optimisticId = `optimistic-${Date.now()}`;
+    const prev = qc.getQueryData<Initial>(["today"]);
+    const optimisticRunning: TodayBlockRow = {
+      id: optimisticId,
+      startAt: nowIso,
+      endAt: null,
+      label: intent,
+      quality: null,
+      manualEntry: false,
+      categoryId: startCat,
+      categoryName: cat?.name ?? startCatName,
+      categoryColor: "color" in (cat ?? {}) ? (cat as { color?: string }).color ?? "#8a8167" : "#8a8167",
+      isFreeTime: false,
+      baseCreditRate: 0,
+      credits: null,
+      tagNames: [],
+    };
+    if (prev) {
+      qc.setQueryData<Initial>(["today"], {
+        ...prev,
+        running: optimisticRunning,
+        runningElapsedSeconds: 0,
+      });
     }
     if (focusTargetMin != null && focusTargetMin > 0) {
-      writeFocusSession({
-        blockId: res.blockId,
-        targetMinutes: focusTargetMin,
-      });
+      writeFocusSession({ blockId: optimisticId, targetMinutes: focusTargetMin });
     } else {
       clearFocusSession();
     }
     setStartIntent("");
-    toast.success("Timer started");
-    await qc.invalidateQueries({ queryKey: ["today"] });
+
+    try {
+      const res = await startBlockAction(startCat, null, intent);
+      if (!res.ok) {
+        // Roll back optimistic state and offer recovery.
+        if (prev) qc.setQueryData<Initial>(["today"], prev);
+        clearFocusSession();
+        toast.error("A block is already running. Stop it first.");
+        await qc.invalidateQueries({ queryKey: ["today"] });
+        return;
+      }
+      // Re-point the focus session to the real block id.
+      if (focusTargetMin != null && focusTargetMin > 0) {
+        writeFocusSession({ blockId: res.blockId, targetMinutes: focusTargetMin });
+      }
+      await qc.invalidateQueries({ queryKey: ["today"] });
+    } catch {
+      if (prev) qc.setQueryData<Initial>(["today"], prev);
+      clearFocusSession();
+      toast.error("Couldn't start the timer. Please try again.");
+      await qc.invalidateQueries({ queryKey: ["today"] });
+    }
   }
 
   async function onStopSubmit() {
     if (!running) return;
-    if (!stopLabel.trim()) {
-      toast.error("Label is required.");
-      return;
-    }
     const categoryId = stopCat || running.categoryId;
     if (!categoryId) {
-      toast.error("Category is required.");
+      toast.error("Label is required.");
       return;
     }
     try {
@@ -458,11 +496,6 @@ export function TodayClient({
           activeProjects={data.activeProjects}
           stopProjectId={stopProjectId}
           setStopProjectId={setStopProjectId}
-          tagsEnabled={data.tagsEnabled}
-          allTags={data.allTags}
-          stopTagIds={stopTagIds}
-          setStopTagIds={setStopTagIds}
-          onTagsChange={() => void qc.invalidateQueries({ queryKey: ["today"] })}
           onOpenStop={() => {
             setStopCat(running.categoryId);
             setStopProjectId("");
@@ -728,6 +761,16 @@ export function TodayClient({
       {data.suspiciousLongRun ? (
         <div className="chip-red text-[12px]">
           Suspiciously long block — forget to stop?
+        </div>
+      ) : null}
+
+      {!running && data.wastedMinutes > 0 ? (
+        <div className="chip-line text-[12px] text-tk-ink-3">
+          {Math.floor(data.wastedMinutes / 60) > 0
+            ? `${Math.floor(data.wastedMinutes / 60)}h ${data.wastedMinutes % 60}m`
+            : `${data.wastedMinutes}m`}{" "}
+          wasted so far · untracked time in your active window. Log a block to
+          reduce it.
         </div>
       ) : null}
 

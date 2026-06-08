@@ -19,10 +19,17 @@ import { isQuality, normalizeQuality, type Quality } from "@/lib/quality";
 export type BlockActionResult =
   | { ok: true }
   | { ok: false; error: string };
-import { getDayRangeUtc } from "@/lib/day-range";
+import {
+  businessDayStartUtc,
+  getBusinessDayRangeUtc,
+} from "@/lib/day-boundary";
 import { ensureDefaultCategories } from "@/lib/ensure-categories";
 import { listActiveProjects } from "@/actions/projects";
-import { getTagsEnabledForUser } from "@/actions/preferences";
+import {
+  getActiveWindowForUser,
+  getTagsEnabledForUser,
+} from "@/actions/preferences";
+import { computeWastedMinutes } from "@/lib/wasted-time";
 import { listTagsForUser, setBlockTags } from "@/lib/tag-utils";
 import { syncTaskActualMinutes } from "@/lib/task-utils";
 
@@ -65,8 +72,13 @@ export async function getTodayData(): Promise<{
   allTags: { id: string; name: string }[];
   tagsEnabled: boolean;
   bodyDoublingIntervalMinutes: number;
+  /** Derived in-window untracked minutes so far today (US9). */
+  wastedMinutes: number;
 }> {
   const { userId, timezone } = await requireUser();
+  // Silent 4 AM rollover: split a timer that has run past the boundary so the
+  // running block always belongs to the current business day (US2).
+  await splitRunningBlockAtBoundary(userId, timezone);
   const activeProjects = await listActiveProjects();
   const now = new Date();
   const calendarHeadline = new Intl.DateTimeFormat("en-US", {
@@ -75,7 +87,7 @@ export async function getTodayData(): Promise<{
     month: "long",
     day: "numeric",
   }).format(now);
-  const { startUtc, endUtc } = getDayRangeUtc(now, timezone);
+  const { startUtc, endUtc } = getBusinessDayRangeUtc(now, timezone);
 
   const cats = await db
     .select({
@@ -215,7 +227,25 @@ export async function getTodayData(): Promise<{
       .limit(1)
       .then((r) => r[0]),
   ]);
-  const tagsEnabled = prefRow?.tagsEnabled ?? true;
+  // Tags removed in favor of a single Label dimension (US8).
+  const tagsEnabled = false;
+
+  const window = await getActiveWindowForUser(userId);
+  const wastedMinutes = computeWastedMinutes({
+    businessDayStartUtc: startUtc,
+    blocks: [
+      ...dayRows.map((r) => ({
+        startAt: new Date(r.block.startAt),
+        endAt: r.block.endAt ? new Date(r.block.endAt) : null,
+      })),
+      ...runningRows.map((r) => ({
+        startAt: new Date(r.block.startAt),
+        endAt: null as Date | null,
+      })),
+    ],
+    window,
+    now,
+  });
 
   return {
     activeProjects,
@@ -229,6 +259,7 @@ export async function getTodayData(): Promise<{
     allTags: tagsEnabled ? allTags : [],
     tagsEnabled,
     bodyDoublingIntervalMinutes: prefRow?.m ?? 0,
+    wastedMinutes,
   };
 }
 
@@ -249,6 +280,54 @@ export async function pollTodayData(): Promise<PollTodayDataResult> {
     }
     throw e;
   }
+}
+
+/**
+ * If a running block started before the current business-day boundary (4 AM),
+ * close it at the boundary and start a fresh running block for the new day that
+ * carries forward the prior block's context. Idempotent and safe to call on
+ * every Today load (US2 / FR-007).
+ */
+export async function splitRunningBlockAtBoundary(
+  userId: string,
+  timezone: string,
+): Promise<void> {
+  const now = new Date();
+  const boundary = businessDayStartUtc(now, timezone);
+  const [running] = await db
+    .select()
+    .from(timeBlocks)
+    .where(and(eq(timeBlocks.userId, userId), isNull(timeBlocks.endAt)))
+    .limit(1);
+  if (!running) return;
+  if (new Date(running.startAt) >= boundary) return; // started today — nothing to do
+
+  // Close the old segment at the boundary, then open a new running block.
+  await db
+    .update(timeBlocks)
+    .set({ endAt: boundary, quality: running.quality ?? "meh", updatedAt: now })
+    .where(and(eq(timeBlocks.id, running.id), isNull(timeBlocks.endAt)));
+
+  try {
+    await db.insert(timeBlocks).values({
+      userId,
+      categoryId: running.categoryId,
+      taskId: running.taskId ?? null,
+      projectId: running.projectId ?? null,
+      startAt: boundary,
+      label: running.label,
+      statedIntent: running.statedIntent ?? null,
+      manualEntry: false,
+      randomBonusApplied: false,
+      createdAt: now,
+      updatedAt: now,
+    });
+  } catch (e) {
+    // If a concurrent reconcile already created the new running block, ignore.
+    const msg = e instanceof Error ? e.message : String(e);
+    if (!msg.includes("UNIQUE") && !msg.includes("unique")) throw e;
+  }
+  revalidatePath("/today");
 }
 
 export async function startBlockAction(
@@ -309,7 +388,8 @@ export async function startBlockAction(
 export async function stopBlockAction(input: {
   blockId: string;
   categoryId: string;
-  label: string;
+  /** Optional: classification is the Label (categoryId); free-text label is deprecated. */
+  label?: string;
   quality: Quality;
   notes?: string;
   projectId?: string | null;
@@ -334,9 +414,10 @@ export async function stopBlockAction(input: {
   }
 
   const categoryId = input.categoryId.trim() || running.categoryId;
-  const label = input.label.trim();
-  if (!categoryId) throw new Error("Category is required");
-  if (!label) throw new Error("Label is required");
+  // Label is no longer a required separate field; classification is the Label
+  // (categoryId). Preserve any prior label text for historical continuity.
+  const label = (input.label ?? "").trim() || running.label || null;
+  if (!categoryId) throw new Error("Label is required");
 
   const [cat] = await db
     .select()
@@ -390,6 +471,54 @@ export async function stopBlockAction(input: {
   revalidatePath("/today");
   revalidatePath("/tasks");
   return { ok: true as const, luckyBonus };
+}
+
+/**
+ * Recovery path: finalize a running block even when the normal stop inputs are
+ * unavailable (e.g. a stuck/locked timer). Sets endAt = now with a safe default
+ * quality so the app can never be left unusable by a running block (US1).
+ */
+export async function forceStopBlockAction(
+  blockId: string,
+): Promise<BlockActionResult> {
+  const { userId } = await requireUser();
+  const now = new Date();
+  const [running] = await db
+    .select()
+    .from(timeBlocks)
+    .where(
+      and(
+        eq(timeBlocks.id, blockId),
+        eq(timeBlocks.userId, userId),
+        isNull(timeBlocks.endAt),
+      ),
+    )
+    .limit(1);
+  if (!running) {
+    // Already stopped — treat as success so the UI can recover.
+    revalidatePath("/today");
+    return { ok: true };
+  }
+  await db
+    .update(timeBlocks)
+    .set({
+      endAt: now,
+      quality: running.quality ?? "meh",
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(timeBlocks.id, blockId),
+        eq(timeBlocks.userId, userId),
+        isNull(timeBlocks.endAt),
+      ),
+    );
+  if (running.taskId) {
+    await syncTaskActualMinutes(running.taskId, userId);
+  }
+  revalidatePath("/today");
+  revalidatePath("/tasks");
+  return { ok: true };
 }
 
 export async function startBlockForTaskAction(taskId: string) {

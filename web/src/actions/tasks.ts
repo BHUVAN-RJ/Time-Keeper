@@ -5,7 +5,7 @@ import { db } from "@/db";
 import { categories, projects, tasks } from "@/db/schema";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
-import { calendarDayInTz } from "@/lib/calendar-day";
+import { businessDayInTz as calendarDayInTz } from "@/lib/day-boundary";
 import { ensureDefaultCategories } from "@/lib/ensure-categories";
 import { listActiveProjects } from "@/actions/projects";
 import { getTagsEnabledForUser } from "@/actions/preferences";
@@ -112,12 +112,14 @@ export async function getTasksPageData() {
 
   const matrixByQuadrant = groupTasksByQuadrant(all);
   const matrixLayout = layoutFromTasks(all);
+  const remainingTasks = sortRemaining(all, today);
 
   return {
     timezone,
     today,
     todayTasks,
     backlogTasks,
+    remainingTasks,
     matrixByQuadrant,
     matrixLayout,
     categories: cats,
@@ -183,6 +185,107 @@ export async function createTaskAction(input: {
 
   revalidatePath("/tasks");
   revalidatePath("/today");
+}
+
+export async function updateTaskAction(
+  taskId: string,
+  fields: {
+    title?: string;
+    estimateMinutes?: number;
+    categoryId?: string | null;
+    projectId?: string | null;
+    dueDate?: string | null;
+    scheduledDate?: string | null;
+    description?: string | null;
+  },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const { userId } = await requireUser();
+  const [existing] = await db
+    .select()
+    .from(tasks)
+    .where(and(eq(tasks.id, taskId), eq(tasks.userId, userId)))
+    .limit(1);
+  if (!existing) return { ok: false, error: "Task not found" };
+
+  const set: Partial<typeof tasks.$inferInsert> = { updatedAt: new Date() };
+
+  if (fields.title !== undefined) {
+    const title = fields.title.trim();
+    if (!title) return { ok: false, error: "Title is required" };
+    set.title = title;
+  }
+  if (fields.estimateMinutes !== undefined) {
+    const est = Math.round(fields.estimateMinutes);
+    if (!Number.isFinite(est) || est <= 0) {
+      return { ok: false, error: "Estimate must be a positive number of minutes" };
+    }
+    set.estimateMinutes = est;
+  }
+  if (fields.categoryId !== undefined) set.categoryId = fields.categoryId || null;
+  if (fields.projectId !== undefined) {
+    set.projectId = fields.projectId?.trim() || null;
+  }
+  if (fields.description !== undefined) {
+    set.description = fields.description?.trim() || null;
+  }
+  if (fields.dueDate !== undefined) set.dueDate = fields.dueDate || null;
+  if (fields.scheduledDate !== undefined) {
+    set.scheduledDate = fields.scheduledDate || null;
+  }
+
+  // Keep status coherent with scheduling for non-terminal tasks.
+  if (
+    (fields.scheduledDate !== undefined || fields.dueDate !== undefined) &&
+    (existing.status === "backlog" || existing.status === "scheduled")
+  ) {
+    const nextScheduled =
+      fields.scheduledDate !== undefined
+        ? fields.scheduledDate || null
+        : existing.scheduledDate;
+    const nextDue =
+      fields.dueDate !== undefined ? fields.dueDate || null : existing.dueDate;
+    set.status = nextScheduled || nextDue ? "scheduled" : "backlog";
+  }
+
+  await db
+    .update(tasks)
+    .set(set)
+    .where(and(eq(tasks.id, taskId), eq(tasks.userId, userId)));
+
+  revalidatePath("/tasks");
+  revalidatePath("/today");
+  revalidatePath("/week");
+  return { ok: true };
+}
+
+/**
+ * Order open tasks overdue/today first, then upcoming (future-dated), then
+ * undated backlog (US5 / FR-014/014a).
+ */
+function sortRemaining(rows: TaskRow[], today: string): TaskRow[] {
+  const bucket = (t: TaskRow): number => {
+    const date = t.scheduledDate ?? t.dueDate ?? null;
+    if (t.status === "in_progress") return 0;
+    if (date == null) return 2; // undated backlog
+    return date <= today ? 0 : 1; // overdue/today : upcoming
+  };
+  return rows.slice().sort((a, b) => {
+    const ba = bucket(a);
+    const bb = bucket(b);
+    if (ba !== bb) return ba - bb;
+    const da = a.scheduledDate ?? a.dueDate ?? "9999-12-31";
+    const db_ = b.scheduledDate ?? b.dueDate ?? "9999-12-31";
+    if (da !== db_) return da < db_ ? -1 : 1;
+    return 0;
+  });
+}
+
+/** All remaining (open) tasks regardless of date (US5 / FR-014/014a). */
+export async function getRemainingTasks(): Promise<TaskRow[]> {
+  const { userId, timezone } = await requireUser();
+  const today = calendarDayInTz(new Date(), timezone);
+  const rows = await taskRowsForUser(userId);
+  return sortRemaining(rows, today);
 }
 
 export async function completeTaskAction(taskId: string) {

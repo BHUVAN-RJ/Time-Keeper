@@ -292,6 +292,10 @@ export const dayStatus = sqliteTable(
     habitsCompletionPercent: real("habits_completion_percent"),
     productivityScore: integer("productivity_score"),
     scoreVsAvgDelta: real("score_vs_avg_delta"),
+    /** Derived in-window untracked minutes for the (closed) business day. */
+    wastedMinutes: integer("wasted_minutes").notNull().default(0),
+    /** True when finalized by silent 4 AM reconciliation rather than manual End Day. */
+    autoClosed: integer("auto_closed", { mode: "boolean" }).notNull().default(false),
     endedAt: integer("ended_at", { mode: "timestamp_ms" }),
     updatedAt: integer("updated_at", { mode: "timestamp_ms" })
       .notNull()
@@ -702,6 +706,10 @@ export const userPreferences = sqliteTable("user_preferences", {
   remindersEnabled: integer("reminders_enabled", { mode: "boolean" })
     .notNull()
     .default(false),
+  /** Start of the active window (HH:MM, 24h, user TZ) for wasted-time evaluation. */
+  activeWindowStart: text("active_window_start").notNull().default("09:00"),
+  /** End of the active window (HH:MM, 24h, user TZ). <= start ⇒ crosses midnight. */
+  activeWindowEnd: text("active_window_end").notNull().default("21:00"),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" })
     .notNull()
     .$defaultFn(() => new Date()),

@@ -4,10 +4,10 @@ import Link from "next/link";
 import { useState, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 import { setOverworkSplitPercent } from "@/actions/preferences";
+import { ActiveWindowSettings } from "@/components/active-window-settings";
 import { BodyDoublingSettings } from "@/components/body-doubling-settings";
 import { GoogleCalendarSettings } from "@/components/google-calendar-settings";
 import { RemindersSettings } from "@/components/reminders-settings";
-import { TagsSettings } from "@/components/tags-settings";
 import { VacationSettings } from "@/components/vacation-settings";
 import { formatOverworkMinutes } from "@/lib/overwork";
 import {
@@ -29,11 +29,11 @@ type Vacation = Awaited<
 type BodyDoubling = Awaited<
   ReturnType<typeof import("@/actions/preferences").getBodyDoublingSettings>
 >;
-type Tags = Awaited<
-  ReturnType<typeof import("@/actions/preferences").getTagsSettings>
->;
 type Reminders = Awaited<
   ReturnType<typeof import("@/actions/preferences").getRemindersSettings>
+>;
+type ActiveWindow = Awaited<
+  ReturnType<typeof import("@/actions/preferences").getActiveWindowSettings>
 >;
 
 export function SettingsClient({
@@ -41,16 +41,16 @@ export function SettingsClient({
   overwork,
   vacation,
   bodyDoubling,
-  tags,
   reminders,
+  activeWindow,
   gcalStatus,
 }: {
   googleCalendar: GoogleCal;
   overwork: OverworkSettings;
   vacation: Vacation;
   bodyDoubling: BodyDoubling;
-  tags: Tags;
   reminders: Reminders;
+  activeWindow: ActiveWindow;
   gcalStatus?: string;
 }) {
   const showScore = useSyncExternalStore(
@@ -155,7 +155,10 @@ export function SettingsClient({
 
       <BodyDoublingSettings initialInterval={bodyDoubling.intervalMinutes} />
 
-      <TagsSettings initialEnabled={tags.enabled} />
+      <ActiveWindowSettings
+        initialStart={activeWindow.start}
+        initialEnd={activeWindow.end}
+      />
 
       <RemindersSettings initialEnabled={reminders.enabled} />
 
