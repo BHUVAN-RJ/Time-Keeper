@@ -276,6 +276,8 @@ export function TodayClient({
   const [stopOpen, setStopOpen] = useState(false);
   const [manualOpen, setManualOpen] = useState(false);
   const [editRow, setEditRow] = useState<TodayBlockRow | null>(null);
+  const [deleteRow, setDeleteRow] = useState<TodayBlockRow | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
 
   const [stopLabel, setStopLabel] = useState("");
   const [stopCat, setStopCat] = useState("");
@@ -466,11 +468,33 @@ export function TodayClient({
     await qc.invalidateQueries({ queryKey: ["today"] });
   }
 
-  async function onDelete(id: string) {
-    if (!confirm("Delete this time block?")) return;
-    await deleteBlockAction(id);
-    toast.success("Deleted");
-    await qc.invalidateQueries({ queryKey: ["today"] });
+  async function onDeleteConfirm() {
+    if (!deleteRow || deleteBusy) return;
+    const id = deleteRow.id;
+    const prev = qc.getQueryData<Initial>(["today"]);
+    if (prev) {
+      qc.setQueryData<Initial>(["today"], {
+        ...prev,
+        blocks: prev.blocks.filter((b) => b.id !== id),
+      });
+    }
+    setDeleteBusy(true);
+    try {
+      const res = await deleteBlockAction(id);
+      if (!res.ok) {
+        if (prev) qc.setQueryData<Initial>(["today"], prev);
+        toast.error(res.error);
+        return;
+      }
+      setDeleteRow(null);
+      toast.success("Deleted");
+      await qc.invalidateQueries({ queryKey: ["today"] });
+    } catch (e) {
+      if (prev) qc.setQueryData<Initial>(["today"], prev);
+      toast.error(e instanceof Error ? e.message : "Could not delete block");
+    } finally {
+      setDeleteBusy(false);
+    }
   }
 
   const todayLabel = data.calendarHeadline;
@@ -875,7 +899,10 @@ export function TodayClient({
                     type="button"
                     className="rounded-lg p-2 text-tk-red/80 hover:bg-tk-surface-2"
                     aria-label="Delete"
-                    onClick={() => void onDelete(b.id)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setDeleteRow(b);
+                    }}
                   >
                     <Trash2 size={16} />
                   </button>
@@ -886,6 +913,45 @@ export function TodayClient({
         )}
       </div>
       </details>
+
+      <Dialog.Root
+        open={!!deleteRow}
+        onOpenChange={(o) => {
+          if (!o && !deleteBusy) setDeleteRow(null);
+        }}
+      >
+        <Dialog.Portal>
+          <Dialog.Overlay className="tk-modal-overlay z-40" />
+          <Dialog.Content className="tk-modal-content z-50 overflow-y-auto p-5">
+            <Dialog.Title className="text-lg font-semibold text-tk-ink">
+              Delete time block?
+            </Dialog.Title>
+            <p className="mt-2 text-[13px] text-tk-ink-2">
+              {deleteRow?.label || "(no label)"} will be removed from today&apos;s
+              log. This cannot be undone.
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <Dialog.Close asChild>
+                <button
+                  type="button"
+                  className="btn-ghost px-4 py-2"
+                  disabled={deleteBusy}
+                >
+                  Cancel
+                </button>
+              </Dialog.Close>
+              <button
+                type="button"
+                className="btn-primary px-4 py-2 text-tk-red"
+                disabled={deleteBusy}
+                onClick={() => void onDeleteConfirm()}
+              >
+                {deleteBusy ? "Deleting…" : "Delete"}
+              </button>
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
 
       <Dialog.Root open={!!editRow} onOpenChange={(o) => !o && setEditRow(null)}>
         <Dialog.Portal>

@@ -649,10 +649,17 @@ export async function updateBlockAction(input: {
   return { ok: true };
 }
 
-export async function deleteBlockAction(blockId: string) {
+export async function deleteBlockAction(
+  blockId: string,
+): Promise<BlockActionResult> {
   const { userId } = await requireUser();
-  await db
+  const deleted = await db
     .delete(timeBlocks)
-    .where(and(eq(timeBlocks.id, blockId), eq(timeBlocks.userId, userId)));
+    .where(and(eq(timeBlocks.id, blockId), eq(timeBlocks.userId, userId)))
+    .returning({ id: timeBlocks.id });
+  if (deleted.length === 0) {
+    return { ok: false, error: "Block not found or already deleted." };
+  }
   revalidatePath("/today");
+  return { ok: true };
 }
