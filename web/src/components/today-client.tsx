@@ -3,7 +3,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Dialog from "@radix-ui/react-dialog";
 import { Pencil, Plus, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import type { getTodayDashboardExtras } from "@/actions/today-extras";
@@ -101,12 +101,16 @@ function RunningBlockPrimaryClock({
   startIso,
   serverSeconds,
   size = "default",
+  onFocusGoalComplete,
 }: {
   blockId: string;
   startIso: string;
   serverSeconds: number;
   size?: "default" | "focus";
+  onFocusGoalComplete?: () => void;
 }) {
+  const focusCompleteFired = useRef(false);
+
   function focusClockState() {
     const s = readFocusSession();
     if (s?.blockId === blockId && s.targetMinutes > 0) {
@@ -137,6 +141,10 @@ function RunningBlockPrimaryClock({
   }
 
   useEffect(() => {
+    focusCompleteFired.current = false;
+  }, [blockId, startIso, targetMin]);
+
+  useEffect(() => {
     if (targetMin == null) return;
     const startMs = new Date(startIso).getTime();
     const capSec = targetMin * 60;
@@ -148,6 +156,13 @@ function RunningBlockPrimaryClock({
     const id = setInterval(tick, 250);
     return () => clearInterval(id);
   }, [blockId, startIso, targetMin]);
+
+  useEffect(() => {
+    if (targetMin == null || !onFocusGoalComplete) return;
+    if (remainSec > 0 || focusCompleteFired.current) return;
+    focusCompleteFired.current = true;
+    onFocusGoalComplete();
+  }, [remainSec, targetMin, onFocusGoalComplete]);
 
   useEffect(() => {
     if (targetMin != null) return;
@@ -509,6 +524,17 @@ export function TodayClient({
     setStopOpen(true);
   }
 
+  const onFocusGoalComplete = useCallback(() => {
+    if (!running) return;
+    toast.info("Focus time complete — log your block");
+    setStopCat(running.categoryId);
+    setStopLabel(running.label ?? running.statedIntent ?? "");
+    setStopQuality(normalizeQuality(running.quality) ?? "useful");
+    setStopProjectId("");
+    setStopTagIds([]);
+    setStopOpen(true);
+  }, [running]);
+
   async function onMarkOffDay() {
     const res = await markOffDayAction();
     if (!res.ok && res.needsCheckIn) {
@@ -540,6 +566,7 @@ export function TodayClient({
               startIso={running.startAt}
               serverSeconds={data.runningElapsedSeconds}
               size="focus"
+              onFocusGoalComplete={onFocusGoalComplete}
             />
           }
           stopOpen={stopOpen}
