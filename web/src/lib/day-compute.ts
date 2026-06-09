@@ -437,6 +437,85 @@ export async function computeWeekSnapshots(
   });
 }
 
+/** Batch-compute snapshots for arbitrary dates (for /stats). */
+export async function computeSnapshotsForDates(
+  userId: string,
+  dates: string[],
+  timezone: string,
+): Promise<Map<string, DaySnapshot>> {
+  const unique = [...new Set(dates)].sort();
+  const map = new Map<string, DaySnapshot>();
+  if (unique.length === 0) return map;
+
+  const startDate = unique[0]!;
+  const endDate = unique[unique.length - 1]!;
+
+  const [allBlocks, statusRows, allGoals, allTasks] = await Promise.all([
+    blocksForRange(userId, startDate, endDate, timezone),
+    db
+      .select()
+      .from(dayStatus)
+      .where(
+        and(eq(dayStatus.userId, userId), inArray(dayStatus.date, unique)),
+      ),
+    db
+      .select({ goal: scheduleGoals, category: categories })
+      .from(scheduleGoals)
+      .innerJoin(categories, eq(scheduleGoals.categoryId, categories.id))
+      .where(
+        and(
+          eq(scheduleGoals.userId, userId),
+          lte(scheduleGoals.effectiveFrom, endDate),
+          or(
+            isNull(scheduleGoals.effectiveTo),
+            gte(scheduleGoals.effectiveTo, startDate),
+          ),
+        ),
+      ),
+    db
+      .select()
+      .from(tasks)
+      .where(
+        and(
+          eq(tasks.userId, userId),
+          inArray(tasks.status, [...ACTIVE_TASK_STATUSES]),
+          or(
+            inArray(tasks.scheduledDate, unique),
+            inArray(tasks.dueDate, unique),
+            eq(tasks.status, "in_progress"),
+          ),
+        ),
+      ),
+  ]);
+
+  const statusByDate = new Map(statusRows.map((r) => [r.date, r]));
+  const habitsPercents = await Promise.all(
+    unique.map((d) => habitsCompletionPercentForDay(userId, d)),
+  );
+
+  unique.forEach((date, i) => {
+    const blockRows = allBlocks.filter(({ block }) => {
+      const { startUtc, endUtc } = getDayRangeUtc(parseISO(date), timezone);
+      const end = block.endAt ? new Date(block.endAt) : new Date();
+      return new Date(block.startAt) <= endUtc && end >= startUtc;
+    });
+    map.set(
+      date,
+      buildDaySnapshot(
+        date,
+        timezone,
+        statusByDate.get(date),
+        blockRows,
+        activeGoalsForDay(allGoals, date),
+        tasksForDay(allTasks, date),
+        habitsPercents[i] ?? 100,
+      ),
+    );
+  });
+
+  return map;
+}
+
 export async function rollingProductivityAvg(
   userId: string,
   timezone: string,

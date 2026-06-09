@@ -28,6 +28,11 @@ import { parseRemindAtLocal } from "@/lib/reminders";
 import { ensureDefaultCategories } from "@/lib/ensure-categories";
 import { listActiveProjects } from "@/actions/projects";
 import {
+  autoStopStaleRunningBlock,
+  clearTimerActivity,
+  recordTimerActivity,
+} from "@/lib/running-timer-idle";
+import {
   getActiveWindowForUser,
   getTagsEnabledForUser,
 } from "@/actions/preferences";
@@ -79,6 +84,7 @@ export async function getTodayData(): Promise<{
   wastedMinutes: number;
 }> {
   const { userId, timezone } = await requireUser();
+  await autoStopStaleRunningBlock(userId);
   // Silent 4 AM rollover: split a timer that has run past the boundary so the
   // running block always belongs to the current business day (US2).
   await splitRunningBlockAtBoundary(userId, timezone);
@@ -331,6 +337,7 @@ export async function splitRunningBlockAtBoundary(
     const msg = e instanceof Error ? e.message : String(e);
     if (!msg.includes("UNIQUE") && !msg.includes("unique")) throw e;
   }
+  await recordTimerActivity(userId);
   revalidatePath("/today");
 }
 
@@ -377,6 +384,7 @@ export async function startBlockAction(
       .returning({ id: timeBlocks.id })
       .get();
     if (!inserted?.id) throw new Error("Insert returned no id");
+    await recordTimerActivity(userId);
     revalidatePath("/today");
     revalidatePath("/tasks");
     return { ok: true as const, blockId: inserted.id };
@@ -471,6 +479,7 @@ export async function stopBlockAction(input: {
   if (input.tagIds?.length && (await getTagsEnabledForUser(userId))) {
     await setBlockTags(userId, input.blockId, input.tagIds);
   }
+  await clearTimerActivity(userId);
   revalidatePath("/today");
   revalidatePath("/tasks");
   return { ok: true as const, luckyBonus };
@@ -662,4 +671,16 @@ export async function deleteBlockAction(
   }
   revalidatePath("/today");
   return { ok: true };
+}
+
+/** Body-doubling dismiss and other explicit check-ins count as timer activity. */
+export async function acknowledgeTimerActivityAction(): Promise<void> {
+  const { userId } = await requireUser();
+  const [running] = await db
+    .select({ id: timeBlocks.id })
+    .from(timeBlocks)
+    .where(and(eq(timeBlocks.userId, userId), isNull(timeBlocks.endAt)))
+    .limit(1);
+  if (!running) return;
+  await recordTimerActivity(userId);
 }

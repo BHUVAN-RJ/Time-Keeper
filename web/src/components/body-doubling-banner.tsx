@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { acknowledgeTimerActivityAction } from "@/actions/time-blocks";
 import { getBodyDoublingPingState } from "@/actions/body-doubling";
 
 const POLL_MS = 30_000;
@@ -61,6 +62,7 @@ export function BodyDoublingBanner() {
     sessionStorage.setItem(key, String(Date.now()));
     setDismissedUntil(Date.now() + 5 * 60 * 1000);
     setPing(null);
+    void acknowledgeTimerActivityAction();
   }
 
   return (

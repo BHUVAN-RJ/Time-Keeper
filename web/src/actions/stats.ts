@@ -4,11 +4,8 @@ import { auth } from "@/auth";
 import { db } from "@/db";
 import { categories, dailyReviews, projects, tasks, timeBlocks } from "@/db/schema";
 import { and, desc, eq, gte, isNotNull, or } from "drizzle-orm";
-import {
-  computeDaySnapshot,
-  computeSlumpModeStub,
-  rollingProductivityAvg,
-} from "@/lib/day-compute";
+import { computeSnapshotsForDates } from "@/lib/day-compute";
+import { autoStopStaleRunningBlock } from "@/lib/running-timer-idle";
 import { calendarDayInTz } from "@/lib/calendar-day";
 import { getDayRangeUtc } from "@/lib/day-range";
 import { ensureDefaultCategories } from "@/lib/ensure-categories";
@@ -92,6 +89,7 @@ function parseTomorrowsPlan(json: string | null): string[] {
 
 export async function getStatsPageData() {
   const { userId, timezone } = await requireUser();
+  await autoStopStaleRunningBlock(userId);
   const today = calendarDayInTz(new Date(), timezone);
   const sinceDate = format(
     addDays(parseISO(today), -(HISTORY_DAYS - 1)),
@@ -99,9 +97,44 @@ export async function getStatsPageData() {
   );
   const sinceUtc = historySinceUtc(today, timezone);
 
-  const snap = await computeDaySnapshot(userId, today, timezone);
-  const rollingAvg = await rollingProductivityAvg(userId, timezone, today);
-  const slump = await computeSlumpModeStub(userId, timezone, today);
+  const base = parseISO(today);
+  const trendDates = Array.from({ length: 14 }, (_, i) =>
+    format(addDays(base, -(13 - i)), "yyyy-MM-dd"),
+  );
+  const rollingCurrentDates = Array.from({ length: 7 }, (_, i) =>
+    format(addDays(base, -(i + 1)), "yyyy-MM-dd"),
+  );
+  const weekAgo = format(addDays(base, -7), "yyyy-MM-dd");
+  const rollingPriorDates = Array.from({ length: 7 }, (_, i) =>
+    format(addDays(parseISO(weekAgo), -(i + 1)), "yyyy-MM-dd"),
+  );
+  const snapshotDates = [
+    ...new Set([today, ...trendDates, ...rollingCurrentDates, ...rollingPriorDates]),
+  ];
+  const snapMap = await computeSnapshotsForDates(userId, snapshotDates, timezone);
+  const snap = snapMap.get(today)!;
+
+  function avgForDates(dates: string[]): number | null {
+    const scores = dates
+      .map((d) => snapMap.get(d))
+      .filter(
+        (s): s is NonNullable<typeof s> =>
+          !!s && s.hasActivity && !s.isOffDay && !s.isVacation,
+      )
+      .map((s) => s.productivityScore);
+    if (scores.length === 0) return null;
+    return Math.round(scores.reduce((a, b) => a + b, 0) / scores.length);
+  }
+
+  const rollingAvg = avgForDates(rollingCurrentDates);
+  const priorAvg = avgForDates(rollingPriorDates);
+  const slump =
+    rollingAvg != null && priorAvg != null
+      ? {
+          slumpMode: rollingAvg - priorAvg <= -15,
+          delta: rollingAvg - priorAvg,
+        }
+      : { slumpMode: false, delta: null as number | null };
 
   const blocks = await db
     .select({ block: timeBlocks, category: categories })
@@ -125,11 +158,9 @@ export async function getStatsPageData() {
   }
 
   const trend: { date: string; score: number }[] = [];
-  const base = parseISO(today);
-  for (let i = 13; i >= 0; i--) {
-    const d = format(addDays(base, -i), "yyyy-MM-dd");
-    const s = await computeDaySnapshot(userId, d, timezone);
-    if (s.hasActivity || s.endedAt) {
+  for (const d of trendDates) {
+    const s = snapMap.get(d);
+    if (s && (s.hasActivity || s.endedAt)) {
       trend.push({ date: d, score: s.productivityScore });
     }
   }

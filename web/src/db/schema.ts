@@ -713,6 +713,8 @@ export const userPreferences = sqliteTable("user_preferences", {
   activeWindowStart: text("active_window_start").notNull().default("09:00"),
   /** End of the active window (HH:MM, 24h, user TZ). <= start ⇒ crosses midnight. */
   activeWindowEnd: text("active_window_end").notNull().default("21:00"),
+  /** Last user activity while a timer was running (for idle auto-stop). */
+  timerLastSeenAt: integer("timer_last_seen_at", { mode: "timestamp_ms" }),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" })
     .notNull()
     .$defaultFn(() => new Date()),
