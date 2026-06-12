@@ -1,9 +1,11 @@
 "use client";
 
+import { useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { ReminderHeaderBell } from "@/components/reminder-chrome";
 import { SignOutButton } from "@/components/sign-out-button";
+import { queryKeys } from "@/lib/queries/keys";
 
 const MAIN_NAV = [
   { href: "/today", label: "Today" },
@@ -30,12 +32,12 @@ export function AppNav({
   remindersEnabled: boolean;
 }) {
   const pathname = usePathname();
-  const router = useRouter();
+  const qc = useQueryClient();
 
   function onTodayClick(e: React.MouseEvent<HTMLAnchorElement>) {
     if (pathname === "/today") {
       e.preventDefault();
-      router.refresh();
+      void qc.invalidateQueries({ queryKey: queryKeys.today.all });
     }
   }
 

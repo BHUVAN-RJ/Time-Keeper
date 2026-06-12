@@ -1,16 +1,9 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import {
-  completeTaskAction,
-  createTaskAction,
-  dropTaskAction,
-  type TaskRow,
-  scheduleTaskForTodayAction,
-  updateTaskAction,
-} from "@/actions/tasks";
+import type { TaskRow } from "@/actions/tasks";
 import { EisenhowerBoard } from "@/components/eisenhower-board";
 import { ProjectPicker } from "@/components/project-picker";
 import { TagPicker } from "@/components/tag-picker";
@@ -20,6 +13,18 @@ import {
   QUADRANTS,
   eisenhowerQuadrant,
 } from "@/lib/eisenhower";
+import {
+  useCompleteTaskMutation,
+  useCreateTaskMutation,
+  useDropTaskMutation,
+  useScheduleForTodayMutation,
+  useUpdateTaskMutation,
+} from "@/lib/mutations/use-task-mutations";
+import { queryKeys } from "@/lib/queries/keys";
+import {
+  fetchTasksPageData,
+  type TasksPageData,
+} from "@/lib/queries/tasks";
 
 type Tab = "today" | "remaining" | "backlog" | "matrix";
 
@@ -27,21 +32,32 @@ function TaskCard({
   task,
   today,
   tagsEnabled,
-  onRefresh,
 }: {
   task: TaskRow;
   today: string;
   tagsEnabled: boolean;
-  onRefresh: () => Promise<void>;
 }) {
+  const complete = useCompleteTaskMutation();
+  const schedule = useScheduleForTodayMutation();
+  const drop = useDropTaskMutation();
+  const update = useUpdateTaskMutation();
+
   const [dropOpen, setDropOpen] = useState(false);
   const [dropReason, setDropReason] = useState("");
-  const [busy, setBusy] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [editTitle, setEditTitle] = useState(task.title);
   const [editEstimate, setEditEstimate] = useState(String(task.estimateMinutes));
   const [editScheduled, setEditScheduled] = useState(task.scheduledDate ?? "");
   const [editDue, setEditDue] = useState(task.dueDate ?? "");
+
+  const pendingId =
+    (complete.isPending && complete.variables?.taskId) ||
+    (schedule.isPending && schedule.variables?.taskId) ||
+    (drop.isPending && drop.variables?.taskId) ||
+    (update.isPending && update.variables?.taskId) ||
+    null;
+
+  const isBusy = pendingId === task.id;
 
   function openEdit() {
     setEditTitle(task.title);
@@ -49,16 +65,6 @@ function TaskCard({
     setEditScheduled(task.scheduledDate ?? "");
     setEditDue(task.dueDate ?? "");
     setEditOpen(true);
-  }
-
-  async function run(fn: () => Promise<void>) {
-    setBusy(true);
-    try {
-      await fn();
-      await onRefresh();
-    } finally {
-      setBusy(false);
-    }
   }
 
   const quadrant = eisenhowerQuadrant(task.urgency, task.importance);
@@ -115,33 +121,38 @@ function TaskCard({
       <div className="flex flex-wrap gap-2">
         <button
           type="button"
-          disabled={busy}
+          disabled={isBusy && complete.isPending}
           className="btn-primary px-3 py-1.5 text-[12px]"
-          onClick={() =>
-            run(async () => {
-              const res = await completeTaskAction(task.id);
-              if (res?.showScoreToast) {
-                toast.success(`Score: ${res.scoreAfter} (+${res.scoreDelta})`, {
-                  duration: 3000,
-                });
-              } else {
-                toast.success("Completed");
-              }
-            })
-          }
+          onClick={() => {
+            complete.mutate(
+              { taskId: task.id },
+              {
+                onSuccess: (res) => {
+                  if (res?.showScoreToast) {
+                    toast.success(
+                      `Score: ${res.scoreAfter} (+${res.scoreDelta})`,
+                      { duration: 3000 },
+                    );
+                  } else {
+                    toast.success("Completed");
+                  }
+                },
+              },
+            );
+          }}
         >
           Done
         </button>
         {task.scheduledDate !== today && task.status !== "in_progress" ? (
           <button
             type="button"
-            disabled={busy}
+            disabled={isBusy && schedule.isPending}
             className="btn-ghost px-3 py-1.5 text-[12px]"
             onClick={() =>
-              run(async () => {
-                await scheduleTaskForTodayAction(task.id);
-                toast.success("Scheduled for today");
-              })
+              schedule.mutate(
+                { taskId: task.id },
+                { onSuccess: () => toast.success("Scheduled for today") },
+              )
             }
           >
             Today
@@ -149,7 +160,7 @@ function TaskCard({
         ) : null}
         <button
           type="button"
-          disabled={busy}
+          disabled={isBusy}
           className="btn-ghost px-3 py-1.5 text-[12px]"
           onClick={openEdit}
         >
@@ -157,7 +168,7 @@ function TaskCard({
         </button>
         <button
           type="button"
-          disabled={busy}
+          disabled={isBusy}
           className="btn-ghost px-3 py-1.5 text-[12px] text-tk-warn"
           onClick={() => setDropOpen((v) => !v)}
         >
@@ -207,30 +218,32 @@ function TaskCard({
           <div className="flex gap-2">
             <button
               type="button"
-              disabled={busy}
+              disabled={isBusy && update.isPending}
               className="btn-primary px-3 py-1.5 text-[12px]"
               onClick={() =>
-                run(async () => {
-                  const res = await updateTaskAction(task.id, {
-                    title: editTitle,
-                    estimateMinutes: Number.parseInt(editEstimate, 10),
-                    scheduledDate: editScheduled || null,
-                    dueDate: editDue || null,
-                  });
-                  if (!res.ok) {
-                    toast.error(res.error);
-                    return;
-                  }
-                  setEditOpen(false);
-                  toast.success("Task updated");
-                })
+                update.mutate(
+                  {
+                    taskId: task.id,
+                    fields: {
+                      title: editTitle,
+                      estimateMinutes: Number.parseInt(editEstimate, 10),
+                      scheduledDate: editScheduled || null,
+                      dueDate: editDue || null,
+                    },
+                  },
+                  {
+                    onSuccess: () => {
+                      setEditOpen(false);
+                      toast.success("Task updated");
+                    },
+                  },
+                )
               }
             >
               Save
             </button>
             <button
               type="button"
-              disabled={busy}
               className="btn-ghost px-3 py-1.5 text-[12px]"
               onClick={() => setEditOpen(false)}
             >
@@ -249,15 +262,19 @@ function TaskCard({
           />
           <button
             type="button"
-            disabled={busy || !dropReason.trim()}
+            disabled={(isBusy && drop.isPending) || !dropReason.trim()}
             className="btn-ghost self-start px-3 py-1.5 text-[12px] text-tk-warn"
             onClick={() =>
-              run(async () => {
-                await dropTaskAction(task.id, dropReason);
-                setDropOpen(false);
-                setDropReason("");
-                toast.success("Dropped");
-              })
+              drop.mutate(
+                { taskId: task.id, reason: dropReason },
+                {
+                  onSuccess: () => {
+                    setDropOpen(false);
+                    setDropReason("");
+                    toast.success("Dropped");
+                  },
+                },
+              )
             }
           >
             Confirm drop
@@ -271,9 +288,11 @@ function TaskCard({
 function TaskTabs({
   tab,
   onTab,
+  isFetching,
 }: {
   tab: Tab;
   onTab: (t: Tab) => void;
+  isFetching?: boolean;
 }) {
   const tabs: { id: Tab; label: string }[] = [
     { id: "today", label: "Today" },
@@ -282,43 +301,59 @@ function TaskTabs({
     { id: "matrix", label: "Matrix" },
   ];
   return (
-    <div className="flex gap-1 rounded-xl border border-tk-line bg-tk-surface-2 p-1">
-      {tabs.map((t) => (
-        <button
-          key={t.id}
-          type="button"
-          onClick={() => onTab(t.id)}
-          className={`flex-1 rounded-lg px-3 py-2 text-[12px] font-medium transition-colors ${
-            tab === t.id
-              ? "bg-tk-surface text-tk-ink shadow-sm"
-              : "text-tk-ink-3 hover:text-tk-ink-2"
-          }`}
-        >
-          {t.label}
-        </button>
-      ))}
+    <div className="flex items-center gap-2">
+      <div className="flex flex-1 gap-1 rounded-xl border border-tk-line bg-tk-surface-2 p-1">
+        {tabs.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => onTab(t.id)}
+            className={`flex-1 rounded-lg px-3 py-2 text-[12px] font-medium transition-colors ${
+              tab === t.id
+                ? "bg-tk-surface text-tk-ink shadow-sm"
+                : "text-tk-ink-3 hover:text-tk-ink-2"
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+      {isFetching ? (
+        <span className="text-[10px] text-tk-ink-4" aria-live="polite">
+          Syncing…
+        </span>
+      ) : null}
     </div>
   );
 }
 
 export function TasksClient({
-  initial,
+  initialData,
   embedded = false,
 }: {
-  initial: Awaited<ReturnType<typeof import("@/actions/tasks").getTasksPageData>>;
+  initialData: TasksPageData;
   embedded?: boolean;
 }) {
-  const router = useRouter();
+  const qc = useQueryClient();
+  const { data = initialData, isFetching } = useQuery({
+    queryKey: queryKeys.tasks.all,
+    queryFn: fetchTasksPageData,
+    initialData,
+    staleTime: 30_000,
+  });
+
+  const createTask = useCreateTaskMutation();
+
   const [tab, setTab] = useState<Tab>("today");
   const [title, setTitle] = useState("");
   const [estimate, setEstimate] = useState("30");
   const [categoryId, setCategoryId] = useState("");
   const [projectId, setProjectId] = useState("");
   const [dueDate, setDueDate] = useState("");
-  const [scheduledDate, setScheduledDate] = useState(initial.today);
+  const [scheduledDate, setScheduledDate] = useState(data.today);
   const [createTagIds, setCreateTagIds] = useState<string[]>([]);
-  const [pending, setPending] = useState(false);
-  const hint = initial.estimateHint;
+
+  const hint = data.estimateHint;
   const estNum = Number(estimate) || 0;
   const likelyMinutes =
     hint && estNum > 0
@@ -326,20 +361,22 @@ export function TasksClient({
       : null;
 
   const matrixTasks = useMemo(
-    () => QUADRANTS.flatMap((q) => initial.matrixByQuadrant[q]),
-    [initial.matrixByQuadrant],
+    () => QUADRANTS.flatMap((q) => data.matrixByQuadrant[q]),
+    [data.matrixByQuadrant],
   );
 
-  async function refresh() {
-    router.refresh();
+  function resetCreateForm() {
+    setTitle("");
+    setEstimate("30");
+    setDueDate("");
+    setCreateTagIds([]);
   }
 
-  async function onCreate(e: React.FormEvent) {
+  function onCreate(e: React.FormEvent) {
     e.preventDefault();
     if (!title.trim()) return;
-    setPending(true);
-    try {
-      await createTaskAction({
+    createTask.mutate(
+      {
         title: title.trim(),
         estimateMinutes: Number(estimate) || 0,
         categoryId: categoryId || null,
@@ -347,18 +384,16 @@ export function TasksClient({
         dueDate: dueDate || null,
         scheduledDate: scheduledDate || null,
         tagIds: createTagIds,
-      });
-      setTitle("");
-      setEstimate("30");
-      setDueDate("");
-      setCreateTagIds([]);
-      toast.success("Task created");
-      await refresh();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not create task");
-    } finally {
-      setPending(false);
-    }
+        onFormReset: resetCreateForm,
+      },
+      {
+        onSuccess: () => toast.success("Task created"),
+      },
+    );
+  }
+
+  function invalidateTasks() {
+    void qc.invalidateQueries({ queryKey: queryKeys.tasks.all });
   }
 
   return (
@@ -366,12 +401,12 @@ export function TasksClient({
       <div>
         <h1 className="text-xl font-semibold text-tk-ink">Tasks</h1>
         <p className="mt-1 text-[13px] text-tk-ink-3">
-          Today is {initial.today}. Use Matrix to prioritize by urgency and
+          Today is {data.today}. Use Matrix to prioritize by urgency and
           importance.
         </p>
       </div>
 
-      <TaskTabs tab={tab} onTab={setTab} />
+      <TaskTabs tab={tab} onTab={setTab} isFetching={isFetching} />
 
       <form onSubmit={onCreate} className="card flex flex-col gap-3 p-4">
         <div className="eyebrow">New task</div>
@@ -405,7 +440,7 @@ export function TasksClient({
               onChange={(e) => setCategoryId(e.target.value)}
             >
               <option value="">—</option>
-              {initial.categories.map((c) => (
+              {data.categories.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
                 </option>
@@ -413,7 +448,7 @@ export function TasksClient({
             </select>
           </label>
           <ProjectPicker
-            projects={initial.activeProjects}
+            projects={data.activeProjects}
             value={projectId}
             onChange={setProjectId}
             className="min-w-[140px]"
@@ -437,44 +472,47 @@ export function TasksClient({
             />
           </label>
         </div>
-        {initial.tagsEnabled ? (
+        {data.tagsEnabled ? (
           <TagPicker
-            allTags={initial.allTags}
+            allTags={data.allTags}
             selectedIds={createTagIds}
             onChange={setCreateTagIds}
-            onTagsChange={() => void refresh()}
+            onTagsChange={invalidateTasks}
           />
         ) : null}
-        <button type="submit" disabled={pending} className="btn-primary self-start">
+        <button
+          type="submit"
+          disabled={createTask.isPending}
+          className="btn-primary self-start"
+        >
           Add task
         </button>
       </form>
 
       {tab === "matrix" ? (
         <EisenhowerBoard
-          key={JSON.stringify(initial.matrixLayout)}
+          key={JSON.stringify(data.matrixLayout)}
           tasks={matrixTasks}
-          initialLayout={initial.matrixLayout}
-          onSaved={() => router.refresh()}
+          initialLayout={data.matrixLayout}
+          onSaved={invalidateTasks}
         />
       ) : null}
 
       {tab === "today" ? (
         <section>
           <h2 className="eyebrow mb-2">Today</h2>
-          {initial.todayTasks.length === 0 ? (
+          {data.todayTasks.length === 0 ? (
             <p className="text-[13px] text-tk-ink-3">
               Nothing scheduled for today yet.
             </p>
           ) : (
             <ul className="flex flex-col gap-2">
-              {initial.todayTasks.map((t) => (
+              {data.todayTasks.map((t) => (
                 <TaskCard
                   key={t.id}
                   task={t}
-                  today={initial.today}
-                  tagsEnabled={initial.tagsEnabled}
-                  onRefresh={refresh}
+                  today={data.today}
+                  tagsEnabled={data.tagsEnabled}
                 />
               ))}
             </ul>
@@ -485,17 +523,16 @@ export function TasksClient({
       {tab === "remaining" ? (
         <section>
           <h2 className="eyebrow mb-2">Remaining tasks</h2>
-          {initial.remainingTasks.length === 0 ? (
+          {data.remainingTasks.length === 0 ? (
             <p className="text-[13px] text-tk-ink-3">No open tasks. All clear.</p>
           ) : (
             <ul className="flex flex-col gap-2">
-              {initial.remainingTasks.map((t) => (
+              {data.remainingTasks.map((t) => (
                 <TaskCard
                   key={t.id}
                   task={t}
-                  today={initial.today}
-                  tagsEnabled={initial.tagsEnabled}
-                  onRefresh={refresh}
+                  today={data.today}
+                  tagsEnabled={data.tagsEnabled}
                 />
               ))}
             </ul>
@@ -506,17 +543,16 @@ export function TasksClient({
       {tab === "backlog" ? (
         <section>
           <h2 className="eyebrow mb-2">Backlog</h2>
-          {initial.backlogTasks.length === 0 ? (
+          {data.backlogTasks.length === 0 ? (
             <p className="text-[13px] text-tk-ink-3">Backlog is empty.</p>
           ) : (
             <ul className="flex flex-col gap-2">
-              {initial.backlogTasks.map((t) => (
+              {data.backlogTasks.map((t) => (
                 <TaskCard
                   key={t.id}
                   task={t}
-                  today={initial.today}
-                  tagsEnabled={initial.tagsEnabled}
-                  onRefresh={refresh}
+                  today={data.today}
+                  tagsEnabled={data.tagsEnabled}
                 />
               ))}
             </ul>

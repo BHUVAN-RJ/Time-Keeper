@@ -1,18 +1,23 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
-import type { listHabitsForManage } from "@/actions/habits";
 import {
   archiveHabitAction,
   createHabitAction,
   updateHabitAction,
 } from "@/actions/habits";
+import { PageLoadingShell } from "@/components/page-loading-shell";
 import type { HabitDayCell } from "@/lib/habits-compute";
+import { queryKeys } from "@/lib/queries/keys";
+import {
+  fetchHabitsManage,
+  type HabitsManageData,
+} from "@/lib/queries/habits";
+import { createTempId } from "@/lib/temp-id";
 
-type Data = Awaited<ReturnType<typeof listHabitsForManage>>;
-type Row = Data["rows"][number];
+type Row = HabitsManageData["rows"][number];
 
 function cellClass(cell: HabitDayCell): string {
   if (cell.offDaySkipped) return "bg-tk-ink-4/50 ring-1 ring-tk-line-strong";
@@ -31,37 +36,101 @@ function cellTitle(cell: HabitDayCell): string {
 }
 
 export function HabitsClient({
-  initial,
+  initialData,
   embedded = false,
+  active = true,
 }: {
-  initial: Data;
+  initialData?: HabitsManageData;
   embedded?: boolean;
+  active?: boolean;
 }) {
-  const router = useRouter();
+  const qc = useQueryClient();
+  const { data, isLoading, isError } = useQuery({
+    queryKey: queryKeys.habits.manage,
+    queryFn: fetchHabitsManage,
+    initialData,
+    enabled: active,
+    staleTime: 30_000,
+  });
+
   const [name, setName] = useState("");
   const [target, setTarget] = useState("1");
-  const [pending, setPending] = useState(false);
 
-  async function refresh() {
-    router.refresh();
-  }
-
-  async function onCreate(e: React.FormEvent) {
-    e.preventDefault();
-    if (!name.trim()) return;
-    setPending(true);
-    try {
-      await createHabitAction({
-        name: name.trim(),
-        targetPerDay: Number(target) || 1,
-      });
+  const createHabit = useMutation({
+    mutationFn: (input: { name: string; targetPerDay: number }) =>
+      createHabitAction(input),
+    onMutate: async (input) => {
+      await qc.cancelQueries({ queryKey: queryKeys.habits.manage });
+      const previous = qc.getQueryData<HabitsManageData>(queryKeys.habits.manage);
       setName("");
       setTarget("1");
-      toast.success("Habit created");
-      await refresh();
-    } finally {
-      setPending(false);
-    }
+      if (previous) {
+        const tempId = createTempId();
+        const optimisticRow: Row = {
+          habit: {
+            id: tempId,
+            userId: "",
+            name: input.name,
+            description: null,
+            targetPerDay: input.targetPerDay,
+            categoryId: null,
+            active: true,
+            archivedAt: null,
+            createdAt: new Date(),
+          },
+          streak: {
+            id: createTempId(),
+            habitId: tempId,
+            currentStreak: 0,
+            longestStreak: 0,
+            daysHitLast30: 0,
+            lastCompletedDate: null,
+            freezesAvailable: 2,
+            freezesUsedThisMonth: 0,
+            freezeMonthKey: null,
+            updatedAt: new Date(),
+          },
+          heatmap: [],
+        };
+        qc.setQueryData<HabitsManageData>(queryKeys.habits.manage, {
+          ...previous,
+          rows: [optimisticRow, ...previous.rows],
+        });
+      }
+      return { previous };
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.previous) {
+        qc.setQueryData(queryKeys.habits.manage, ctx.previous);
+      }
+      toast.error("Could not create habit");
+    },
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.habits.manage });
+      void qc.invalidateQueries({ queryKey: queryKeys.today.all });
+    },
+    onSuccess: () => toast.success("Habit created"),
+  });
+
+  if (isLoading && !data) {
+    return <PageLoadingShell title="Habits" rows={4} />;
+  }
+
+  if (isError || !data) {
+    return (
+      <p className="text-center text-[13px] text-tk-ink-3">
+        Could not load habits.
+      </p>
+    );
+  }
+
+  function onCreate(e: React.FormEvent) {
+    e.preventDefault();
+    if (!name.trim()) return;
+    createHabit.mutate({
+      name: name.trim(),
+      targetPerDay: Number(target) || 1,
+    });
   }
 
   return (
@@ -96,20 +165,20 @@ export function HabitsClient({
         <button
           type="submit"
           className="btn-primary py-2.5 text-[14px]"
-          disabled={pending}
+          disabled={createHabit.isPending}
         >
           Add habit
         </button>
       </form>
 
-      {initial.rows.length === 0 ? (
+      {data.rows.length === 0 ? (
         <p className="text-center text-[13px] text-tk-ink-3">
           No habits yet. Add one above — they show on Today.
         </p>
       ) : (
         <ul className="flex flex-col gap-4">
-          {initial.rows.map((row) => (
-            <HabitRowCard key={row.habit.id} row={row} onChanged={refresh} />
+          {data.rows.map((row) => (
+            <HabitRowCard key={row.habit.id} row={row} />
           ))}
         </ul>
       )}
@@ -117,39 +186,74 @@ export function HabitsClient({
   );
 }
 
-function HabitRowCard({
-  row,
-  onChanged,
-}: {
-  row: Row;
-  onChanged: () => Promise<void>;
-}) {
+function HabitRowCard({ row }: { row: Row }) {
+  const qc = useQueryClient();
   const { habit, streak, heatmap } = row;
   const [editName, setEditName] = useState(habit.name);
   const [editTarget, setEditTarget] = useState(String(habit.targetPerDay));
-  const [saving, setSaving] = useState(false);
 
-  async function save() {
-    setSaving(true);
-    try {
-      await updateHabitAction(habit.id, {
+  const update = useMutation({
+    mutationFn: () =>
+      updateHabitAction(habit.id, {
         name: editName,
         targetPerDay: Number(editTarget) || 1,
         active: habit.active,
-      });
-      toast.success("Saved");
-      await onChanged();
-    } finally {
-      setSaving(false);
-    }
-  }
+      }),
+    onMutate: async () => {
+      await qc.cancelQueries({ queryKey: queryKeys.habits.manage });
+      const previous = qc.getQueryData<HabitsManageData>(queryKeys.habits.manage);
+      if (previous) {
+        qc.setQueryData<HabitsManageData>(queryKeys.habits.manage, {
+          ...previous,
+          rows: previous.rows.map((r) =>
+            r.habit.id === habit.id
+              ? {
+                  ...r,
+                  habit: {
+                    ...r.habit,
+                    name: editName,
+                    targetPerDay: Number(editTarget) || 1,
+                  },
+                }
+              : r,
+          ),
+        });
+      }
+      return { previous };
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.previous) qc.setQueryData(queryKeys.habits.manage, ctx.previous);
+      toast.error("Could not save habit");
+    },
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.habits.manage });
+    },
+    onSuccess: () => toast.success("Saved"),
+  });
 
-  async function archive() {
-    if (!confirm(`Archive "${habit.name}"?`)) return;
-    await archiveHabitAction(habit.id);
-    toast.success("Archived");
-    await onChanged();
-  }
+  const archive = useMutation({
+    mutationFn: () => archiveHabitAction(habit.id),
+    onMutate: async () => {
+      await qc.cancelQueries({ queryKey: queryKeys.habits.manage });
+      const previous = qc.getQueryData<HabitsManageData>(queryKeys.habits.manage);
+      if (previous) {
+        qc.setQueryData<HabitsManageData>(queryKeys.habits.manage, {
+          ...previous,
+          rows: previous.rows.filter((r) => r.habit.id !== habit.id),
+        });
+      }
+      return { previous };
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.previous) qc.setQueryData(queryKeys.habits.manage, ctx.previous);
+      toast.error("Could not archive habit");
+    },
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.habits.manage });
+      void qc.invalidateQueries({ queryKey: queryKeys.today.all });
+    },
+    onSuccess: () => toast.success("Archived"),
+  });
 
   return (
     <li className="card flex flex-col gap-3 p-4">
@@ -183,15 +287,17 @@ function HabitRowCard({
         <button
           type="button"
           className="btn-primary px-4 py-2 text-[13px]"
-          disabled={saving}
-          onClick={() => void save()}
+          disabled={update.isPending}
+          onClick={() => update.mutate()}
         >
           Save
         </button>
         <button
           type="button"
           className="btn-ghost px-4 py-2 text-[13px] text-tk-red"
-          onClick={() => void archive()}
+          onClick={() => {
+            if (confirm(`Archive "${habit.name}"?`)) archive.mutate();
+          }}
         >
           Archive
         </button>

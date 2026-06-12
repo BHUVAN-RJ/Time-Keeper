@@ -17,7 +17,7 @@ import { blockCreditsMinutes } from "@/lib/credits";
 import { isQuality, normalizeQuality, type Quality } from "@/lib/quality";
 
 export type BlockActionResult =
-  | { ok: true }
+  | { ok: true; id?: string }
   | { ok: false; error: string };
 import {
   businessDayInTz,
@@ -618,7 +618,7 @@ export async function createManualBlockAction(input: {
     await setBlockTags(userId, inserted[0].id, input.tagIds);
   }
   revalidatePath("/today");
-  return { ok: true };
+  return { ok: true, id: inserted[0]!.id };
 }
 
 export async function updateBlockAction(input: {

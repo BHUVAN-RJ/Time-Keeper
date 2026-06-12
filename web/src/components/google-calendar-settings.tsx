@@ -1,7 +1,7 @@
 "use client";
 
+import { useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import { toast } from "sonner";
 import {
@@ -40,8 +40,13 @@ export function GoogleCalendarSettings({
   builtinExcludeSummary: string;
   excludeCustomLines: string[];
 }) {
-  const router = useRouter();
+  const qc = useQueryClient();
   const [pending, startTransition] = useTransition();
+
+  function invalidateCalendar() {
+    void qc.invalidateQueries({ queryKey: ["week"] });
+    void qc.invalidateQueries({ queryKey: ["today"] });
+  }
   const [excludeText, setExcludeText] = useState(
     () => excludeCustomLines.join("\n"),
   );
@@ -84,7 +89,7 @@ export function GoogleCalendarSettings({
                   startTransition(async () => {
                     await refreshGoogleCalendarCacheAction();
                     toast.success("Calendar refreshed");
-                    router.refresh();
+                    invalidateCalendar();
                   })
                 }
               >
@@ -118,7 +123,7 @@ export function GoogleCalendarSettings({
                       startTransition(async () => {
                         await disconnectGoogleCalendarAccount(a.id);
                         toast.success("Disconnected");
-                        router.refresh();
+                        invalidateCalendar();
                       })
                     }
                   >
@@ -158,7 +163,7 @@ export function GoogleCalendarSettings({
                 startTransition(async () => {
                   await saveCalendarExcludePatternsAction(excludeText);
                   toast.success("Filter saved — calendar refreshed");
-                  router.refresh();
+                  invalidateCalendar();
                 })
               }
             >

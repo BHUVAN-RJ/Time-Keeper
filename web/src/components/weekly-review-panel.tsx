@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -20,7 +20,7 @@ export function WeeklyReviewPanel({
   /** Inside Week collapsible — no outer card border. */
   embedded?: boolean;
 }) {
-  const router = useRouter();
+  const qc = useQueryClient();
   const [draft, setDraft] = useState<Awaited<
     ReturnType<typeof getWeeklyReviewDraft>
   > | null>(null);
@@ -58,7 +58,7 @@ export function WeeklyReviewPanel({
       });
       toast.success("Weekly review saved");
       onCompleted?.();
-      router.refresh();
+      void qc.invalidateQueries({ queryKey: ["week"] });
     } finally {
       setPending(false);
     }

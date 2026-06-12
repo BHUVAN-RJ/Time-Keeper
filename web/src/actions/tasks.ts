@@ -185,6 +185,7 @@ export async function createTaskAction(input: {
 
   revalidatePath("/tasks");
   revalidatePath("/today");
+  return { id: inserted[0]!.id };
 }
 
 export async function updateTaskAction(

@@ -73,16 +73,20 @@ export async function createProjectAction(input: {
   const name = input.name.trim();
   if (!name) throw new Error("Name required");
   const now = new Date();
-  await db.insert(projects).values({
-    userId,
-    name,
-    description: input.description?.trim() || null,
-    status: "active",
-    createdAt: now,
-  });
+  const [inserted] = await db
+    .insert(projects)
+    .values({
+      userId,
+      name,
+      description: input.description?.trim() || null,
+      status: "active",
+      createdAt: now,
+    })
+    .returning({ id: projects.id });
   revalidatePath("/projects");
   revalidatePath("/tasks");
   revalidatePath("/today");
+  return { id: inserted!.id };
 }
 
 export async function updateProjectAction(input: {

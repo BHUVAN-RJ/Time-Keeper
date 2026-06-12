@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { Bell } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -54,7 +53,6 @@ export function ReminderHeaderBell({
 }
 
 export function ReminderBanner({ initial }: { initial: ReminderView | null }) {
-  const router = useRouter();
   const [banner, setBanner] = useState(initial);
   const [busy, setBusy] = useState(false);
 
@@ -77,7 +75,6 @@ export function ReminderBanner({ initial }: { initial: ReminderView | null }) {
     try {
       await fn();
       refresh();
-      router.refresh();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Could not update reminder");
     } finally {

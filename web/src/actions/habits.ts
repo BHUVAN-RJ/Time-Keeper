@@ -151,6 +151,7 @@ export async function createHabitAction(input: {
   await ensureStreakRow(row!.id);
   await recomputeHabitStreak(userId, row!, calendarDayInTz(new Date(), timezone));
   revalidateHabitPaths();
+  return { id: row!.id };
 }
 
 export async function updateHabitAction(

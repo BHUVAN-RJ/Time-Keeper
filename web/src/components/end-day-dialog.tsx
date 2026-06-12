@@ -1,7 +1,7 @@
 "use client";
 
 import * as Dialog from "@radix-ui/react-dialog";
-import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -84,8 +84,14 @@ function EndDayDialogBody({
   onOpenChange: (v: boolean) => void;
   onWeeklyReviewNudge: () => void;
 }) {
-  const router = useRouter();
+  const qc = useQueryClient();
   const [preview, setPreview] = useState<Preview | null>(null);
+
+  function refreshAfterEndDay() {
+    void qc.invalidateQueries({ queryKey: ["today"] });
+    void qc.invalidateQueries({ queryKey: ["week"] });
+    void qc.invalidateQueries({ queryKey: ["tasks"] });
+  }
   const [step, setStep] = useState(0);
   const [breakdownOpen, setBreakdownOpen] = useState(false);
   const [mood, setMood] = useState<number | null>(null);
@@ -190,7 +196,7 @@ function EndDayDialogBody({
       );
       onOpenChange(false);
       onSuccess?.();
-      router.refresh();
+      refreshAfterEndDay();
       if (result.weeklyReviewNudge) {
         onWeeklyReviewNudge();
       }
@@ -226,7 +232,7 @@ function EndDayDialogBody({
                 onClick={() => {
                   onOpenChange(false);
                   onSuccess?.();
-                  router.refresh();
+                  refreshAfterEndDay();
                 }}
               >
                 Continue

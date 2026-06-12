@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
 import {
@@ -9,6 +9,11 @@ import {
 } from "@/actions/categories";
 import { upsertScheduleGoalAction } from "@/actions/schedule-goals";
 import { categories } from "@/db/schema";
+import { queryKeys } from "@/lib/queries/keys";
+import {
+  fetchCategories,
+  type CategoriesData,
+} from "@/lib/queries/categories";
 
 type Category = typeof categories.$inferSelect;
 
@@ -27,53 +32,70 @@ export function CategoriesClient({
   initial: Category[];
   scheduleGoals: ScheduleGoal[];
 }) {
-  const router = useRouter();
+  const qc = useQueryClient();
+  const { data: rows = initial } = useQuery({
+    queryKey: queryKeys.categories.all,
+    queryFn: fetchCategories,
+    initialData: initial,
+    staleTime: 30_000,
+  });
+
   const [name, setName] = useState("");
   const [rate, setRate] = useState("10");
   const [color, setColor] = useState("#8a8167");
   const [free, setFree] = useState(false);
-  const [pending, setPending] = useState(false);
 
-  async function refresh() {
-    router.refresh();
+  function invalidateCategories() {
+    void qc.invalidateQueries({ queryKey: queryKeys.categories.all });
+    void qc.invalidateQueries({ queryKey: queryKeys.today.all });
+    void qc.invalidateQueries({ queryKey: queryKeys.tasks.all });
   }
 
-  async function onCreate(e: React.FormEvent) {
-    e.preventDefault();
-    if (!name.trim()) return;
-    setPending(true);
-    try {
-      await createCategoryAction({
+  const createCategory = useMutation({
+    mutationFn: () =>
+      createCategoryAction({
         name: name.trim(),
         baseCreditRate: Number(rate) || 0,
         color,
         isFreeTime: free,
-      });
+      }),
+    onSuccess: () => {
       setName("");
       setRate("10");
       setColor("#8a8167");
       setFree(false);
       toast.success("Category created");
-      await refresh();
-    } finally {
-      setPending(false);
-    }
+      invalidateCategories();
+    },
+  });
+
+  function onCreate(e: React.FormEvent) {
+    e.preventDefault();
+    if (!name.trim()) return;
+    createCategory.mutate();
   }
 
   async function toggleArchive(row: Category) {
+    const nextArchived = !row.archived;
+    qc.setQueryData<CategoriesData>(queryKeys.categories.all, (prev) =>
+      prev?.map((c) =>
+        c.id === row.id ? { ...c, archived: nextArchived } : c,
+      ),
+    );
     const res = await updateCategoryAction(row.id, {
       name: row.name,
       baseCreditRate: row.baseCreditRate,
       color: row.color,
       isFreeTime: row.isFreeTime,
-      archived: !row.archived,
+      archived: nextArchived,
     });
     if (!res.ok && res.code === "HAS_BLOCKS") {
+      invalidateCategories();
       toast.error("Archive blocked: reassign or delete time blocks first.");
       return;
     }
     toast.success(row.archived ? "Restored" : "Archived");
-    await refresh();
+    invalidateCategories();
   }
 
   async function patchField(
@@ -82,15 +104,21 @@ export function CategoriesClient({
       Pick<Category, "name" | "baseCreditRate" | "color" | "isFreeTime">
     >,
   ) {
-    await updateCategoryAction(row.id, {
+    const next = {
       name: patch.name ?? row.name,
       baseCreditRate: patch.baseCreditRate ?? row.baseCreditRate,
       color: patch.color ?? row.color,
       isFreeTime: patch.isFreeTime ?? row.isFreeTime,
+    };
+    qc.setQueryData<CategoriesData>(queryKeys.categories.all, (prev) =>
+      prev?.map((c) => (c.id === row.id ? { ...c, ...next } : c)),
+    );
+    await updateCategoryAction(row.id, {
+      ...next,
       archived: row.archived,
     });
     toast.success("Saved");
-    await refresh();
+    invalidateCategories();
   }
 
   return (
@@ -109,7 +137,11 @@ export function CategoriesClient({
             Drives goal hit %, red-day signal, and End Day credits.
           </p>
           {scheduleGoals.map((g) => (
-            <ScheduleGoalRow key={g.id} goal={g} onSaved={refresh} />
+            <ScheduleGoalRow
+              key={g.id}
+              goal={g}
+              onSaved={invalidateCategories}
+            />
           ))}
         </section>
       ) : null}
@@ -153,7 +185,7 @@ export function CategoriesClient({
         </div>
         <button
           type="submit"
-          disabled={pending}
+          disabled={createCategory.isPending}
           className="btn-primary py-2 text-[14px] disabled:opacity-50"
         >
           Add category
@@ -161,7 +193,7 @@ export function CategoriesClient({
       </form>
 
       <div className="flex flex-col gap-2">
-        {initial.map((row) => (
+        {rows.map((row) => (
           <CategoryRow
             key={`${row.id}:${row.name}:${row.baseCreditRate}:${row.color}:${String(row.isFreeTime)}:${String(row.archived)}`}
             row={row}
@@ -179,7 +211,7 @@ function ScheduleGoalRow({
   onSaved,
 }: {
   goal: ScheduleGoal;
-  onSaved: () => Promise<void>;
+  onSaved: () => void;
 }) {
   const [mins, setMins] = useState(String(goal.targetMinutesPerDay));
   return (
@@ -202,7 +234,7 @@ function ScheduleGoalRow({
             categoryId: goal.categoryId,
             targetMinutesPerDay: Number(mins) || 0,
           });
-          await onSaved();
+          onSaved();
         }}
       />
     </label>

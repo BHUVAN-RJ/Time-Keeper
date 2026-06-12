@@ -1,55 +1,66 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { toast } from "sonner";
 import {
   acknowledgeReminderAction,
   createReminderAction,
   deleteReminderAction,
+  getRemindersPageData,
   snoozeReminderAction,
   updateReminderAction,
   type ReminderView,
 } from "@/actions/reminders";
+import { queryKeys } from "@/lib/queries/keys";
 import type { RecurringKind } from "@/lib/reminders";
+
+type RemindersData = Awaited<ReturnType<typeof getRemindersPageData>>;
 
 export function RemindersClient({
   initial,
 }: {
-  initial: Awaited<
-    ReturnType<typeof import("@/actions/reminders").getRemindersPageData>
-  >;
+  initial: RemindersData;
 }) {
-  const router = useRouter();
-  const [title, setTitle] = useState("");
-  const [remindAt, setRemindAt] = useState(initial.defaultRemindAtLocal);
-  const [recurring, setRecurring] = useState<"" | RecurringKind>("");
-  const [pending, setPending] = useState(false);
+  const qc = useQueryClient();
+  const { data = initial } = useQuery({
+    queryKey: queryKeys.reminders.all,
+    queryFn: getRemindersPageData,
+    initialData: initial,
+    staleTime: 30_000,
+  });
 
-  async function refresh() {
-    router.refresh();
+  const [title, setTitle] = useState("");
+  const [remindAt, setRemindAt] = useState(data.defaultRemindAtLocal);
+  const [recurring, setRecurring] = useState<"" | RecurringKind>("");
+
+  function invalidateReminders() {
+    void qc.invalidateQueries({ queryKey: queryKeys.reminders.all });
   }
 
-  async function onCreate(e: React.FormEvent) {
-    e.preventDefault();
-    if (!title.trim()) return;
-    setPending(true);
-    try {
-      await createReminderAction({
+  const createReminder = useMutation({
+    mutationFn: () =>
+      createReminderAction({
         title: title.trim(),
         remindAtLocal: remindAt,
         recurring: recurring || null,
-      });
+      }),
+    onSuccess: () => {
       setTitle("");
-      setRemindAt(initial.defaultRemindAtLocal);
+      setRemindAt(data.defaultRemindAtLocal);
       setRecurring("");
       toast.success("Reminder created");
-      await refresh();
-    } catch (err) {
+      invalidateReminders();
+    },
+    onError: (err) => {
       toast.error(err instanceof Error ? err.message : "Could not create");
-    } finally {
-      setPending(false);
-    }
+    },
+  });
+
+  function onCreate(e: React.FormEvent) {
+    e.preventDefault();
+    if (!title.trim()) return;
+    createReminder.mutate();
   }
 
   return (
@@ -96,29 +107,37 @@ export function RemindersClient({
             </select>
           </label>
         </div>
-        <button type="submit" disabled={pending} className="btn-primary self-start">
+        <button
+          type="submit"
+          disabled={createReminder.isPending}
+          className="btn-primary self-start"
+        >
           Add reminder
         </button>
       </form>
 
       <section>
         <h2 className="eyebrow mb-2">Upcoming</h2>
-        {initial.upcoming.length === 0 ? (
+        {data.upcoming.length === 0 ? (
           <p className="text-[13px] text-tk-ink-3">No upcoming reminders.</p>
         ) : (
           <ul className="flex flex-col gap-2">
-            {initial.upcoming.map((r) => (
-              <ReminderRowCard key={r.id} reminder={r} onChange={refresh} />
+            {data.upcoming.map((r) => (
+              <ReminderRowCard
+                key={r.id}
+                reminder={r}
+                onChange={invalidateReminders}
+              />
             ))}
           </ul>
         )}
       </section>
 
-      {initial.past.length > 0 ? (
+      {data.past.length > 0 ? (
         <section>
           <h2 className="eyebrow mb-2">Recently done</h2>
           <ul className="flex flex-col gap-2 opacity-80">
-            {initial.past.map((r) => (
+            {data.past.map((r) => (
               <li key={r.id} className="card p-3 text-[13px] text-tk-ink-3">
                 <span className="text-tk-ink">{r.title}</span>
                 <span className="ml-2">· {r.remindAtLabel}</span>
@@ -136,7 +155,7 @@ function ReminderRowCard({
   onChange,
 }: {
   reminder: ReminderView;
-  onChange: () => Promise<void>;
+  onChange: () => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);

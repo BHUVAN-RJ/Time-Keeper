@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -11,14 +11,59 @@ import {
   type ProjectListRow,
 } from "@/actions/projects";
 import { PageLoadingShell } from "@/components/page-loading-shell";
+import { queryKeys } from "@/lib/queries/keys";
+import { createTempId } from "@/lib/temp-id";
 
 export function ProjectsClient({ embedded = false }: { embedded?: boolean }) {
+  const qc = useQueryClient();
   const { data: rows = [], isLoading, isError, refetch } = useQuery({
-    queryKey: ["projects"],
+    queryKey: queryKeys.projects.all,
     queryFn: () => listProjects(),
   });
   const [name, setName] = useState("");
   const [desc, setDesc] = useState("");
+
+  const createProject = useMutation({
+    mutationFn: (input: { name: string; description: string }) =>
+      createProjectAction(input),
+    onMutate: async (input) => {
+      await qc.cancelQueries({ queryKey: queryKeys.projects.all });
+      const previous = qc.getQueryData<ProjectListRow[]>(queryKeys.projects.all);
+      const tempId = createTempId();
+      setName("");
+      setDesc("");
+      if (previous) {
+        const now = new Date();
+        qc.setQueryData<ProjectListRow[]>(queryKeys.projects.all, [
+          {
+            id: tempId,
+            userId: "",
+            name: input.name,
+            description: input.description || null,
+            status: "active",
+            createdAt: now,
+            completedAt: null,
+            retiredAt: null,
+            retiredReason: null,
+            trackedMinutes: 0,
+          },
+          ...previous,
+        ]);
+      }
+      return { previous };
+    },
+    onError: (_e, _v, ctx) => {
+      if (ctx?.previous) {
+        qc.setQueryData(queryKeys.projects.all, ctx.previous);
+      }
+      toast.error("Could not create project");
+    },
+    onSettled: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.projects.all });
+      void qc.invalidateQueries({ queryKey: queryKeys.tasks.all });
+    },
+    onSuccess: () => toast.success("Project created"),
+  });
 
   const { active, completed, retired } = useMemo(() => {
     const active: ProjectListRow[] = [];
@@ -32,14 +77,10 @@ export function ProjectsClient({ embedded = false }: { embedded?: boolean }) {
     return { active, completed, retired };
   }, [rows]);
 
-  async function onCreate(e: React.FormEvent) {
+  function onCreate(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim()) return;
-    await createProjectAction({ name, description: desc });
-    setName("");
-    setDesc("");
-    toast.success("Project created");
-    await refetch();
+    createProject.mutate({ name: name.trim(), description: desc });
   }
 
   if (isLoading) {

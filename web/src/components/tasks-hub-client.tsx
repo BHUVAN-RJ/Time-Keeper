@@ -1,10 +1,12 @@
 "use client";
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { useCallback, useState } from "react";
 import type { listHabitsForManage } from "@/actions/habits";
 import { HabitsClient } from "@/components/habits-client";
 import { ProjectsClient } from "@/components/projects-client";
 import { TasksClient } from "@/components/tasks-client";
+import type { TasksPageData } from "@/lib/queries/tasks";
 
 export type TasksHubView = "tasks" | "habits" | "projects";
 
@@ -24,24 +26,29 @@ export function TasksHubClient({
   habitsInitial,
   initialView,
 }: {
-  tasksInitial: Awaited<
-    ReturnType<typeof import("@/actions/tasks").getTasksPageData>
-  >;
+  tasksInitial: TasksPageData;
   habitsInitial: Awaited<ReturnType<typeof listHabitsForManage>>;
   initialView: TasksHubView;
 }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const view = parseView(searchParams.get("view") ?? initialView);
+  const urlView = parseView(searchParams.get("view") ?? initialView);
+  const [view, setViewState] = useState<TasksHubView>(urlView);
 
-  function setView(next: TasksHubView) {
-    const params = new URLSearchParams(searchParams.toString());
-    if (next === "tasks") params.delete("view");
-    else params.set("view", next);
-    const q = params.toString();
-    router.push(q ? `${pathname}?${q}` : pathname);
-  }
+  const setView = useCallback(
+    (next: TasksHubView) => {
+      setViewState(next);
+      const params = new URLSearchParams(searchParams.toString());
+      if (next === "tasks") params.delete("view");
+      else params.set("view", next);
+      const q = params.toString();
+      router.replace(q ? `${pathname}?${q}` : pathname, { scroll: false });
+    },
+    [pathname, router, searchParams],
+  );
+
+  const activeView = view;
 
   return (
     <div className="flex flex-col gap-4 py-2">
@@ -52,7 +59,7 @@ export function TasksHubClient({
             type="button"
             onClick={() => setView(v.id)}
             className={`flex-1 rounded-lg px-3 py-2 text-[12px] font-medium transition-colors ${
-              view === v.id
+              activeView === v.id
                 ? "bg-tk-surface text-tk-ink shadow-sm"
                 : "text-tk-ink-3 hover:text-tk-ink-2"
             }`}
@@ -62,9 +69,15 @@ export function TasksHubClient({
         ))}
       </div>
 
-      {view === "tasks" ? <TasksClient initial={tasksInitial} embedded /> : null}
-      {view === "habits" ? <HabitsClient initial={habitsInitial} embedded /> : null}
-      {view === "projects" ? <ProjectsClient embedded /> : null}
+      {activeView === "tasks" ? (
+        <TasksClient initialData={tasksInitial} embedded />
+      ) : null}
+      {activeView === "habits" ? (
+        <HabitsClient initialData={habitsInitial} embedded active />
+      ) : null}
+      {activeView === "projects" ? (
+        <ProjectsClient embedded />
+      ) : null}
     </div>
   );
 }

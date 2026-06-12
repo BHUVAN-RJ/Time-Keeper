@@ -6,7 +6,21 @@ import { useState } from "react";
 import { Toaster } from "sonner";
 
 export function AppProviders({ children }: { children: React.ReactNode }) {
-  const [queryClient] = useState(() => new QueryClient());
+  const [queryClient] = useState(
+    () =>
+      new QueryClient({
+        defaultOptions: {
+          queries: {
+            staleTime: 30_000,
+            retry: 1,
+            refetchOnWindowFocus: true,
+          },
+          mutations: {
+            retry: 0,
+          },
+        },
+      }),
+  );
 
   return (
     <SessionProvider>

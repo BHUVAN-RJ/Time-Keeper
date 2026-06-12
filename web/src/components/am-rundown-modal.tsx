@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
@@ -22,8 +22,13 @@ export function AmRundownModal({
   runningBlockId: string | null;
   onNeedStop: () => void;
 }) {
-  const router = useRouter();
+  const qc = useQueryClient();
   const [openOverride, setOpenOverride] = useState<boolean | null>(null);
+
+  function refreshToday() {
+    void qc.invalidateQueries({ queryKey: ["today"] });
+    void qc.invalidateQueries({ queryKey: ["week"] });
+  }
   const [pending, setPending] = useState(false);
   const [batchPending, setBatchPending] = useState(false);
   const [closeCatchUpOpen, setCloseCatchUpOpen] = useState(false);
@@ -52,7 +57,7 @@ export function AmRundownModal({
     try {
       await dismissAmRundownAction();
       setOpenOverride(false);
-      router.refresh();
+      refreshToday();
     } finally {
       setPending(false);
     }
@@ -65,12 +70,12 @@ export function AmRundownModal({
       toast.error("Day did not save — try closing again.");
       setModeOverride(null);
       setOpenOverride(true);
-      router.refresh();
+      refreshToday();
       return;
     }
     setModeOverride(fresh.mode);
     setOpenOverride(fresh.mode !== "hidden");
-    router.refresh();
+    refreshToday();
   }
 
   async function onBatchClose() {
@@ -94,7 +99,7 @@ export function AmRundownModal({
       const fresh = await getAmRundownData();
       setModeOverride(fresh.mode);
       setOpenOverride(fresh.mode !== "hidden");
-      router.refresh();
+      refreshToday();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Batch close failed");
     } finally {

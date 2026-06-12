@@ -2,8 +2,8 @@
 
 import * as Dialog from "@radix-ui/react-dialog";
 import { Plus } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
 import type { getTodayDashboardExtras } from "@/actions/today-extras";
@@ -27,7 +27,7 @@ export function TodayV02Panel({
   /** Block today's End Day until calendar yesterday is closed (AM catch-up). */
   yesterdayNeedsClose?: boolean;
 }) {
-  const router = useRouter();
+  const qc = useQueryClient();
   const { openQuickAdd } = useQuickAdd();
   const [whatsNextOpen, setWhatsNextOpen] = useState(false);
   const [endDayOpen, setEndDayOpen] = useState(false);
@@ -45,7 +45,7 @@ export function TodayV02Panel({
       }
       toast.success("Started");
       setWhatsNextOpen(false);
-      router.refresh();
+      void qc.invalidateQueries({ queryKey: ["today"] });
     } finally {
       setBusy(false);
     }

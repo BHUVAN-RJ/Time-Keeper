@@ -42,6 +42,13 @@ import {
   readFocusSession,
   writeFocusSession,
 } from "@/lib/focus-session-storage";
+import {
+  appendCompletedBlock,
+  buildStoppedBlock,
+  insertBlock,
+  updateBlockInList,
+} from "@/lib/mutations/today-cache-helpers";
+import { createTempId } from "@/lib/temp-id";
 import { todayDataFingerprint } from "@/lib/today-data-fingerprint";
 
 type Initial = Awaited<ReturnType<typeof getTodayData>>;
@@ -377,19 +384,19 @@ export function TodayClient({
         if (prev) qc.setQueryData<Initial>(["today"], prev);
         clearFocusSession();
         toast.error("A block is already running. Stop it first.");
-        await qc.invalidateQueries({ queryKey: ["today"] });
+        void qc.invalidateQueries({ queryKey: ["today"] });
         return;
       }
       // Re-point the focus session to the real block id.
       if (focusTargetMin != null && focusTargetMin > 0) {
         writeFocusSession({ blockId: res.blockId, targetMinutes: focusTargetMin });
       }
-      await qc.invalidateQueries({ queryKey: ["today"] });
+      void qc.invalidateQueries({ queryKey: ["today"] });
     } catch {
       if (prev) qc.setQueryData<Initial>(["today"], prev);
       clearFocusSession();
       toast.error("Couldn't start the timer. Please try again.");
-      await qc.invalidateQueries({ queryKey: ["today"] });
+      void qc.invalidateQueries({ queryKey: ["today"] });
     }
   }
 
@@ -404,6 +411,24 @@ export function TodayClient({
       toast.error("Label is required.");
       return;
     }
+    const prev = qc.getQueryData<Initial>(["today"]);
+    const stoppedBlock = buildStoppedBlock(running, {
+      categoryId,
+      label: stopLabel,
+      quality: stopQuality,
+    });
+    if (prev) {
+      qc.setQueryData<Initial>(
+        ["today"],
+        appendCompletedBlock(prev, stoppedBlock),
+      );
+    }
+    clearFocusSession();
+    setStopOpen(false);
+    setStopLabel("");
+    setStopNotes("");
+    setStopTagIds([]);
+
     try {
       const stopped = await stopBlockAction({
         blockId: running.id,
@@ -414,18 +439,14 @@ export function TodayClient({
         projectId: stopProjectId || null,
         tagIds: stopTagIds,
       });
-      clearFocusSession();
-      setStopOpen(false);
-      setStopLabel("");
-      setStopNotes("");
-      setStopTagIds([]);
       if (stopped.luckyBonus) {
         toast.success("Lucky block — 1.5× credits");
       } else {
         toast.success("Saved");
       }
-      await qc.invalidateQueries({ queryKey: ["today"] });
+      void qc.invalidateQueries({ queryKey: ["today"] });
     } catch (e) {
+      if (prev) qc.setQueryData<Initial>(["today"], prev);
       toast.error(e instanceof Error ? e.message : "Could not stop timer");
     }
   }
@@ -435,6 +456,34 @@ export function TodayClient({
       toast.error("Category and label required.");
       return;
     }
+    const prev = qc.getQueryData<Initial>(["today"]);
+    const tempId = createTempId();
+    const cat = data.categories.find((c) => c.id === manualCat);
+    const dayKey = new Intl.DateTimeFormat("en-CA", {
+      timeZone: tz,
+    }).format(new Date());
+    if (prev) {
+      const optimisticBlock: TodayBlockRow = {
+        id: tempId,
+        startAt: new Date(`${dayKey}T${manualStart}`).toISOString(),
+        endAt: new Date(`${dayKey}T${manualEnd}`).toISOString(),
+        label: manualLabel.trim(),
+        quality: manualQuality,
+        manualEntry: true,
+        categoryId: manualCat,
+        categoryName: cat?.name ?? "",
+        categoryColor: cat?.color ?? "#8a8167",
+        isFreeTime: false,
+        baseCreditRate: 0,
+        credits: null,
+        tagNames: [],
+      };
+      qc.setQueryData<Initial>(["today"], insertBlock(prev, optimisticBlock));
+    }
+    setManualOpen(false);
+    setManualLabel("");
+    setManualTagIds([]);
+
     const res = await createManualBlockAction({
       categoryId: manualCat,
       startTime: manualStart,
@@ -445,14 +494,12 @@ export function TodayClient({
       tagIds: manualTagIds,
     });
     if (!res.ok) {
+      if (prev) qc.setQueryData<Initial>(["today"], prev);
       toast.error(res.error);
       return;
     }
-    setManualOpen(false);
-    setManualLabel("");
-    setManualTagIds([]);
     toast.success("Block added");
-    await qc.invalidateQueries({ queryKey: ["today"] });
+    void qc.invalidateQueries({ queryKey: ["today"] });
   }
 
   async function onEditSave() {
@@ -466,6 +513,16 @@ export function TodayClient({
       toast.error("Quality required for completed blocks.");
       return;
     }
+    const prev = qc.getQueryData<Initial>(["today"]);
+    const saved = { ...editRow, quality: q };
+    if (prev) {
+      qc.setQueryData<Initial>(
+        ["today"],
+        updateBlockInList(prev, editRow.id, () => saved),
+      );
+    }
+    setEditRow(null);
+
     const res = await updateBlockAction({
       blockId: editRow.id,
       categoryId: editRow.categoryId,
@@ -475,12 +532,12 @@ export function TodayClient({
       quality: q,
     });
     if (!res.ok) {
+      if (prev) qc.setQueryData<Initial>(["today"], prev);
       toast.error(res.error);
       return;
     }
-    setEditRow(null);
     toast.success("Updated");
-    await qc.invalidateQueries({ queryKey: ["today"] });
+    void qc.invalidateQueries({ queryKey: ["today"] });
   }
 
   async function onDeleteConfirm() {
@@ -503,7 +560,7 @@ export function TodayClient({
       }
       setDeleteRow(null);
       toast.success("Deleted");
-      await qc.invalidateQueries({ queryKey: ["today"] });
+      void qc.invalidateQueries({ queryKey: ["today"] });
     } catch (e) {
       if (prev) qc.setQueryData<Initial>(["today"], prev);
       toast.error(e instanceof Error ? e.message : "Could not delete block");
@@ -544,7 +601,7 @@ export function TodayClient({
       toast.error(res.error ?? "No off days in bank");
     } else if (res.ok) {
       toast.success("Today is an off day");
-      await qc.invalidateQueries({ queryKey: ["today"] });
+      void qc.invalidateQueries({ queryKey: ["today"] });
     }
   }
 

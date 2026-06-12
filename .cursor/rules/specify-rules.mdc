@@ -1,0 +1,17 @@
+---
+alwaysApply: true
+---
+
+<!-- SPECKIT START -->
+For additional context about technologies to be used, project structure,
+shell commands, and other important information, read the current plan at
+`specs/002-reactive-async-ui/plan.md` (feature: Reactive UI & Async Data Sync).
+
+Stack: Next.js 16 (App Router, Server Actions) + React 19, Drizzle ORM on libSQL/SQLite,
+next-auth 5, @tanstack/react-query, zustand, date-fns-tz, Tailwind v4. App lives in `web/`.
+Quality gates: `npm run typecheck` and `npm run lint` (no automated test runner configured).
+Key design: optimistic client cache + background server sync via React Query useMutation;
+setQueryData/invalidateQueries (no router.refresh in components); instant in-page tab switches;
+SSR initialData hydration; shared lib/queries/ and lib/mutations/ helpers; optimistic timer
+stop/manual/delete and all task/habit/project/category mutations.
+<!-- SPECKIT END -->
