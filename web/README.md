@@ -1,6 +1,6 @@
-# Time Keeper — web app (v0.1)
+# Time Keeper — web app
 
-Next.js 16 app in this folder. Product spec: repo root `spec_v4.md`. Phase checklist: `docs/v0.1-phase.md`. Design tokens: `docs/design.md` and `src/styles/design-tokens.ts`.
+Next.js 16 app in this folder. Product spec: repo root [`spec_v4.md`](../spec_v4.md). Latest feature record: [`specs/003-rewards-sync-shop/implementation-record.md`](../specs/003-rewards-sync-shop/implementation-record.md). Design tokens: `src/styles/design-tokens.ts`.
 
 ## Setup
 
@@ -9,10 +9,11 @@ Next.js 16 app in this folder. Product spec: repo root `spec_v4.md`. Phase check
 3. Apply DB migrations to your Turso database:
 
 ```bash
+source .env.local   # load TURSO_* vars
 npm run db:migrate
 ```
 
-(Requires `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` in the environment, e.g. from `.env.local` — load them in your shell or use a tool like `direnv`.)
+Current head migration: **`0016_early_grim_reaper`** (allocation columns + shop tables). See [`specs/003-rewards-sync-shop/implementation-record.md`](../specs/003-rewards-sync-shop/implementation-record.md) for deploy notes.
 
 4. Dev server:
 
@@ -21,6 +22,20 @@ npm run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000) — you will be redirected to sign-in or Today.
+
+## Main routes
+
+| Route | Purpose |
+|-------|---------|
+| `/today` | Timer, blocks, AM rundown, pinned top-3, habits |
+| `/week` | Weekly view + rundown |
+| `/tasks` | Task backlog and scheduling |
+| `/habits` | Habit management |
+| `/projects` | Projects |
+| `/stats` | Credits, score, history |
+| `/shop` | Symbolic point redemptions |
+| `/categories` | Category CRUD (includes archived) |
+| `/settings` | Preferences |
 
 ## Scripts
 

@@ -78,17 +78,16 @@ See `tech_setup.md` for accounts, env vars, and deployment.
 **`categories`**
 - `id`, `user_id`, `name`, `base_credit_rate` (min/hr), `color`, `is_free_time` (bool), `archived` (bool)
 
-Seeded on signup:
+Seeded on signup (**four active categories** since `003-rewards-sync-shop`, June 2026):
 
 | Name | Rate (min/hr) | is_free_time |
 |---|---|---|
-| Deep work | 15 | false |
-| Regular work | 10 | false |
-| Admin / shallow | 5 | false |
-| Learning | 12 | false |
+| Deep Work | 15 | false |
+| Admin / Shallow | 5 | false |
+| Cooking / Cleaning | 5 | false |
 | Exercise | 8 | false |
-| Sleep | 0 | false |
-| Free time (earned) | 0 | true |
+
+Older names (Regular work, Learning, Sleep, Free time (earned), Chores, etc.) are **archived** on migration — still visible on historical blocks and in Settings → Categories.
 
 **`tags`**
 - `id`, `user_id`, `name`
@@ -103,15 +102,28 @@ Seeded on signup:
 - `start_at`, `end_at` (nullable while running)
 - `label`, `quality` (useful | chores | meh | wasted | null)
 - `notes`, `manual_entry` (bool)
-- `task_id` (nullable fk), `habit_completion_id` (nullable fk), `project_id` (nullable fk)
+- `task_id` (nullable fk), `habit_id` (nullable — allocation target), `habit_completion_id` (nullable fk), `project_id` (nullable fk)
+- `focus_target_minutes` (nullable int — server-backed focus countdown from block start)
 - `random_bonus_applied` (bool, default false)
 - `stated_intent` (text, nullable — for body doubling proxy)
 - `created_at`, `updated_at`
+
+**Allocation rule (June 2026):** at most one of `project_id`, `habit_id`, `task_id` per block. Stopping a block allocated to a habit auto-completes that habit for the business day.
+
+**Credit bonuses (multiplicative with quality + day-close):** 2× task, 2× habit, 3× project — see `web/src/lib/allocation-bonus.ts`.
 
 **Constraint:** unique partial index on `(user_id)` where `end_at IS NULL` — only one running block per user.
 
 **`time_block_tags`** (many-to-many)
 - `time_block_id`, `tag_id`
+
+**`shop_items`** *(symbolic rewards, June 2026)*
+- `id`, `slug` (unique), `name`, `description`, `cost_points`, `active`, `sort_order`, `created_at`
+
+**`shop_redemptions`**
+- `id`, `user_id`, `shop_item_id`, `points_spent`, `redeemed_at`
+
+Balance = earned credits − free-time spent − sum(redemptions). Redemptions are in-app confirmation only (no external fulfillment).
 
 ### 5.3 Schedule & day status
 
@@ -740,6 +752,27 @@ The following are **implemented** in the Next.js app under `web/`: Resend magic 
 - Settings polish (full score weights, red threshold, etc. — partial today)
 - **Realistic schedule proposals every 4 weeks** (ADHD J)
 
+### Rewards, Sync & Shop — **COMPLETE** (`003-rewards-sync-shop`, June 2026)
+
+**Goal:** fix multi-device ritual/sync gaps, richer allocation + credits, simplified categories, symbolic shop.
+
+**Authoritative detail:** [`specs/003-rewards-sync-shop/implementation-record.md`](specs/003-rewards-sync-shop/implementation-record.md) and [`specs/003-rewards-sync-shop/`](specs/003-rewards-sync-shop/).
+
+**Shipped in `web/`:**
+
+- AM rundown + day-close state synced via React Query (`useAmRundownQuery`, optimistic dismiss)
+- Server-backed focus countdown (`focus_target_minutes` on running block)
+- Dual-dropdown allocation (project / habit / task) on stop, manual entry, edit block
+- Credit bonuses: 2× task, 2× habit, 3× project (multiplicative with quality + day-close)
+- Habit auto-complete when block stopped with habit allocation
+- Four active categories only; legacy categories archived
+- Complete tasks from Today pinned top-3
+- Intent copy (“what you will be doing”) instead of “Label”
+- `/shop` — Food Coupon (850 pts), PS5 (16,500 pts); redemption history
+- Migration **`0016`** (delta SQL: `habit_id`, `focus_target_minutes`, shop tables)
+
+**Routes added:** `/shop` (nav link).
+
 ### v0.5 — Sharing + Polish (3–5 days)
 **Goal:** share with friends, smooth edges.
 
@@ -766,12 +799,12 @@ The following are **implemented** in the Next.js app under `web/`: Resend magic 
 
 ## 10. Handoff to coding agent
 
-**Current state (May 2026):** v0.1 and **v0.2 are complete** on `main`. **v0.3 is mostly complete** for dogfooding (see [`docs/v0.3-phase.md`](docs/v0.3-phase.md)). **v0.4 is in progress** — Eisenhower, reminders, tags, vacations, and body doubling shipped; export/import and schedule proposals remain (see [`docs/v0.4-phase.md`](docs/v0.4-phase.md)). Read this spec + [`tech_setup_v2.md`](tech_setup_v2.md) + phase docs [`docs/v0.1-phase.md`](docs/v0.1-phase.md), [`docs/v0.2-phase.md`](docs/v0.2-phase.md), [`docs/v0.3-phase.md`](docs/v0.3-phase.md), [`docs/v0.4-phase.md`](docs/v0.4-phase.md).
+**Current state (June 2026):** v0.1 and **v0.2 are complete** on `main`. **v0.3 is mostly complete** for dogfooding. **v0.4 is in progress** — Eisenhower, reminders, tags, vacations, and body doubling shipped; export/import and schedule proposals remain. **Rewards, Sync & Shop** shipped on branch `003-rewards-sync-shop` — see [`specs/003-rewards-sync-shop/implementation-record.md`](specs/003-rewards-sync-shop/implementation-record.md). Read this spec + [`tech_setup_v2.md`](tech_setup_v2.md) + feature spec [`specs/003-rewards-sync-shop/`](specs/003-rewards-sync-shop/).
 
 1. Finish **remaining v0.4** items (export/import, schedule proposals, optional settings knobs), then stop for dogfooding — or defer explicitly with user.
-2. **Do not** rebuild v0.2 Google Calendar as Auth.js Google provider — calendar OAuth is intentionally separate (see `docs/v0.2-phase.md` §2).
-3. Run migrations after schema changes: `cd web && source .env.local && npm run db:migrate` (through **`0011`** for current v0.4).
-4. Match existing patterns: server actions, Drizzle schema, design tokens in `globals.css`, Sonner toasts bottom-center.
+2. **Do not** rebuild v0.2 Google Calendar as Auth.js Google provider — calendar OAuth is intentionally separate.
+3. Run migrations after schema changes: `cd web && source .env.local && npm run db:migrate` (through **`0016`** including shop + allocation columns).
+4. Match existing patterns: server actions, Drizzle schema, React Query optimistic cache (`setQueryData` / `invalidateQueries`, no `router.refresh` in components), design tokens in `globals.css`, Sonner toasts bottom-center.
 5. When v0.4 is fully closed, mark §9 v0.4 **COMPLETE** and trim stale “partial” bullets in v0.3.
 
 **Do not** let the agent build the whole spec in one pass. The cost isn't tokens — it's that rebuilding wrong abstractions later costs more than building correctly the second time.

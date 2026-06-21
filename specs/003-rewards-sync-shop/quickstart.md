@@ -2,7 +2,9 @@
 
 Manual verification for feature `003-rewards-sync-shop`.
 
-**Prereqs**: `cd web && npm run dev`; logged-in user; two browsers or one normal + one incognito (simulate two devices).
+**Status:** Implemented and shipped (June 2026). See [`implementation-record.md`](./implementation-record.md).
+
+**Prereqs**: `cd web && npm run dev`; logged-in user; migration **`0016`** applied (`source .env.local && npm run db:migrate`); two browsers or one normal + one incognito (simulate two devices).
 
 **Quality gates**:
 

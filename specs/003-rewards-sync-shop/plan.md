@@ -140,6 +140,16 @@ web/
 3. Stats page balance: `earned - spent - sum(redemptions)`.
 4. Redemption history list on shop page.
 
+## Implementation Status
+
+**Status:** COMPLETE — shipped on branch `003-rewards-sync-shop`, pushed to origin, migration `0016` applied to Turso.
+
+**Record:** [`implementation-record.md`](./implementation-record.md)
+
+**Verification:** `npm run typecheck`, `npm run lint`, and manual scenarios in [`quickstart.md`](./quickstart.md).
+
+**Migration note:** `0016_early_grim_reaper.sql` was trimmed to delta-only SQL before apply (add columns + shop tables). Do not re-run a full drizzle-kit snapshot against existing databases.
+
 ## Complexity Tracking
 
 > No constitution violations; section intentionally empty.

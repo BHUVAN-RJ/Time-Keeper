@@ -542,6 +542,18 @@ If you want more, look at: matrix builds (Node version compatibility), composite
 
 **Do** use the manual GitHub Action from §4.5 — migrate prod explicitly after each schema change.
 
+**Current migration head (Time Keeper repo, June 2026):** `web/drizzle/0016_early_grim_reaper.sql`
+
+```bash
+cd web
+source .env.local
+npm run db:migrate
+```
+
+Adds `time_blocks.habit_id`, `time_blocks.focus_target_minutes`, and `shop_items` / `shop_redemptions`. Feature details: [`specs/003-rewards-sync-shop/implementation-record.md`](../specs/003-rewards-sync-shop/implementation-record.md).
+
+If `git push` fails with a 403 (wrong GitHub account on HTTPS), run `gh auth setup-git` so git uses your active `gh` credentials.
+
 ---
 
 ## 6. PWA configuration
