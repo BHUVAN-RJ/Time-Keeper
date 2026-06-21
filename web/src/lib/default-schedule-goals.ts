@@ -1,19 +1,18 @@
+import { COOKING_CLEANING_CATEGORY_NAME } from "./default-categories";
+
 /** Default daily targets (minutes) keyed by seeded category name. */
 export const DEFAULT_SCHEDULE_GOALS: Record<string, number> = {
-  "Deep work": 120,
-  "Regular work": 240,
-  "Admin / shallow": 60,
-  Chores: 60,
-  "Learning": 60,
+  "Deep Work": 120,
+  "Admin / Shallow": 60,
+  [COOKING_CLEANING_CATEGORY_NAME]: 60,
   Exercise: 30,
-  Sleep: 0,
-  "Free time (earned)": 0,
 };
 
 export const WORK_CATEGORY_NAMES = new Set([
+  "Deep Work",
+  "Admin / Shallow",
   "Deep work",
   "Regular work",
-  "Admin / shallow",
   "Learning",
 ]);
 

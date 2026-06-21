@@ -9,6 +9,8 @@ import { autoStopStaleRunningBlock } from "@/lib/running-timer-idle";
 import { calendarDayInTz } from "@/lib/calendar-day";
 import { getDayRangeUtc } from "@/lib/day-range";
 import { ensureDefaultCategories } from "@/lib/ensure-categories";
+import { computeCreditBalance } from "@/lib/credit-balance";
+import { allocationCreditMultiplier } from "@/lib/allocation-bonus";
 import { normalizeQuality, qualityCreditMultiplier } from "@/lib/quality";
 import { addDays, format, parseISO } from "date-fns";
 
@@ -142,8 +144,9 @@ export async function getStatsPageData() {
     .innerJoin(categories, eq(timeBlocks.categoryId, categories.id))
     .where(eq(timeBlocks.userId, userId));
 
-  let earned = 0;
-  let spent = 0;
+  const creditBalance = await computeCreditBalance(userId);
+
+  let allocationBonusCredits = 0;
   for (const { block, category } of blocks) {
     if (!block.endAt || !block.quality) continue;
     const q = normalizeQuality(block.quality);
@@ -151,10 +154,10 @@ export async function getStatsPageData() {
     const mins =
       (new Date(block.endAt).getTime() - new Date(block.startAt).getTime()) /
       60_000;
-    const raw =
+    const base =
       (mins / 60) * category.baseCreditRate * qualityCreditMultiplier(q);
-    if (category.isFreeTime) spent += raw;
-    else earned += raw;
+    const mult = allocationCreditMultiplier(block);
+    allocationBonusCredits += base * (mult - 1);
   }
 
   const trend: { date: string; score: number }[] = [];
@@ -312,7 +315,8 @@ export async function getStatsPageData() {
     scoreVsAvg:
       rollingAvg != null ? snap.productivityScore - rollingAvg : null,
     trend,
-    creditBalance: earned - spent,
+    creditBalance,
+    allocationBonusCredits: Math.round(allocationBonusCredits * 10) / 10,
     slumpModeStub: slump.slumpMode,
     slumpDeltaStub: slump.delta,
     completed,

@@ -10,29 +10,39 @@ import {
 } from "@/actions/am-rundown";
 import { EndDayDialog } from "@/components/end-day-dialog";
 import { RitualModal } from "@/components/ritual-modal";
-
-type Data = Awaited<ReturnType<typeof getAmRundownData>>;
+import {
+  useAmRundownQuery,
+  type AmRundownData,
+} from "@/lib/queries/am-rundown";
+import { queryKeys } from "@/lib/queries/keys";
 
 export function AmRundownModal({
-  data,
+  initialData,
   runningBlockId,
   onNeedStop,
 }: {
-  data: Data;
+  initialData: AmRundownData;
   runningBlockId: string | null;
   onNeedStop: () => void;
 }) {
   const qc = useQueryClient();
+  const { data: queryData } = useAmRundownQuery(initialData);
+  const data = queryData ?? initialData;
+
   const [openOverride, setOpenOverride] = useState<boolean | null>(null);
 
-  function refreshToday() {
-    void qc.invalidateQueries({ queryKey: ["today"] });
-    void qc.invalidateQueries({ queryKey: ["week"] });
+  function refreshSynced() {
+    void qc.invalidateQueries({ queryKey: queryKeys.amRundown.all });
+    void qc.invalidateQueries({ queryKey: queryKeys.today.all });
+    void qc.invalidateQueries({ queryKey: queryKeys.week.all });
   }
+
   const [pending, setPending] = useState(false);
   const [batchPending, setBatchPending] = useState(false);
   const [closeCatchUpOpen, setCloseCatchUpOpen] = useState(false);
-  const [modeOverride, setModeOverride] = useState<Data["mode"] | null>(null);
+  const [modeOverride, setModeOverride] = useState<AmRundownData["mode"] | null>(
+    null,
+  );
 
   const effectiveMode =
     data.mode !== "unclosed" ? data.mode : (modeOverride ?? data.mode);
@@ -55,9 +65,13 @@ export function AmRundownModal({
   async function onStartDay() {
     setPending(true);
     try {
+      qc.setQueryData(queryKeys.amRundown.all, {
+        ...data,
+        mode: "hidden" as const,
+      });
       await dismissAmRundownAction();
       setOpenOverride(false);
-      refreshToday();
+      refreshSynced();
     } finally {
       setPending(false);
     }
@@ -66,16 +80,17 @@ export function AmRundownModal({
   async function onCatchUpClosed() {
     setCloseCatchUpOpen(false);
     const fresh = await getAmRundownData();
+    qc.setQueryData(queryKeys.amRundown.all, fresh);
     if (fresh.mode === "unclosed") {
       toast.error("Day did not save — try closing again.");
       setModeOverride(null);
       setOpenOverride(true);
-      refreshToday();
+      refreshSynced();
       return;
     }
     setModeOverride(fresh.mode);
     setOpenOverride(fresh.mode !== "hidden");
-    refreshToday();
+    refreshSynced();
   }
 
   async function onBatchClose() {
@@ -97,9 +112,10 @@ export function AmRundownModal({
           : `Closed ${res.closed} day${res.closed === 1 ? "" : "s"}`,
       );
       const fresh = await getAmRundownData();
+      qc.setQueryData(queryKeys.amRundown.all, fresh);
       setModeOverride(fresh.mode);
       setOpenOverride(fresh.mode !== "hidden");
-      refreshToday();
+      refreshSynced();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Batch close failed");
     } finally {
@@ -197,7 +213,7 @@ export function AmRundownModal({
   );
 }
 
-function RundownBody({ data }: { data: Data }) {
+function RundownBody({ data }: { data: AmRundownData }) {
   return (
     <div className="flex flex-col gap-5">
       {data.rollingAvg != null ? (

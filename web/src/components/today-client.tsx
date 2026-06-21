@@ -28,7 +28,12 @@ import { TodayHabitsPanel } from "@/components/today-habits-panel";
 import { TodayPinnedTop3 } from "@/components/today-pinned-top3";
 import { TodayV03Panel } from "@/components/today-v03-panel";
 import { TodayV02Panel } from "@/components/today-v02-panel";
-import { ProjectPicker } from "@/components/project-picker";
+import {
+  AllocationPicker,
+  allocationToFields,
+  fieldsToAllocation,
+} from "@/components/allocation-picker";
+import type { AllocationType } from "@/components/allocation-picker-types";
 import { TagPicker } from "@/components/tag-picker";
 import { formatCredits } from "@/lib/credits";
 import { QualityPicker } from "@/components/quality-picker";
@@ -49,6 +54,8 @@ import {
   updateBlockInList,
 } from "@/lib/mutations/today-cache-helpers";
 import { createTempId } from "@/lib/temp-id";
+import { useAmRundownQuery } from "@/lib/queries/am-rundown";
+import { queryKeys } from "@/lib/queries/keys";
 import { todayDataFingerprint } from "@/lib/today-data-fingerprint";
 
 type Initial = Awaited<ReturnType<typeof getTodayData>>;
@@ -107,26 +114,33 @@ function RunningBlockPrimaryClock({
   blockId,
   startIso,
   serverSeconds,
+  serverFocusTargetMinutes,
   size = "default",
   onFocusGoalComplete,
 }: {
   blockId: string;
   startIso: string;
   serverSeconds: number;
+  serverFocusTargetMinutes?: number | null;
   size?: "default" | "focus";
   onFocusGoalComplete?: () => void;
 }) {
   const focusCompleteFired = useRef(false);
 
   function focusClockState() {
-    const s = readFocusSession();
-    if (s?.blockId === blockId && s.targetMinutes > 0) {
-      const capSec = s.targetMinutes * 60;
+    const targetMinutes =
+      serverFocusTargetMinutes != null && serverFocusTargetMinutes > 0
+        ? serverFocusTargetMinutes
+        : readFocusSession()?.blockId === blockId
+          ? readFocusSession()!.targetMinutes
+          : null;
+    if (targetMinutes != null && targetMinutes > 0) {
+      const capSec = targetMinutes * 60;
       const elapsed = Math.floor(
         (Date.now() - new Date(startIso).getTime()) / 1000,
       );
       return {
-        targetMin: s.targetMinutes,
+        targetMin: targetMinutes,
         remainSec: capSec - elapsed,
       };
     }
@@ -251,7 +265,7 @@ export function TodayClient({
   });
 
   const { data = initial } = useQuery({
-    queryKey: ["today"],
+    queryKey: queryKeys.today.all,
     queryFn: async () => {
       const res = await pollTodayData();
       if (!res.ok) {
@@ -277,12 +291,28 @@ export function TodayClient({
   });
 
   const tz = data.timezone;
+  const { data: amRundownData } = useAmRundownQuery(amRundown);
+  const amRundownLive = amRundownData ?? amRundown;
+
   const activeCats = useMemo(
     () => data.categories.filter((c) => !c.archived),
     [data.categories],
   );
   const catOptions = (selectedId?: string) =>
     data.categories.filter((c) => !c.archived || c.id === selectedId);
+  const editCategoryOptions = (row: TodayBlockRow) => {
+    const base = catOptions(row.categoryId);
+    if (base.some((c) => c.id === row.categoryId)) return base;
+    return [
+      {
+        id: row.categoryId,
+        name: row.categoryName,
+        color: row.categoryColor,
+        archived: true,
+      },
+      ...base,
+    ];
+  };
   const firstActiveId = activeCats[0]?.id ?? "";
   const [startCatPick, setStartCatPick] = useState<string | null>(null);
   const validPick =
@@ -292,7 +322,8 @@ export function TodayClient({
   const startCat = validPick ?? firstActiveId;
   const startCatName =
     activeCats.find((c) => c.id === startCat)?.name ?? "";
-  const isStartDeepWork = startCatName === "Deep work";
+  const isStartDeepWork =
+    startCatName === "Deep Work" || startCatName === "Deep work";
 
   const running = data.running;
   const [stopOpen, setStopOpen] = useState(false);
@@ -305,7 +336,12 @@ export function TodayClient({
   const [stopCat, setStopCat] = useState("");
   const [stopQuality, setStopQuality] = useState<Quality>("useful");
   const [stopNotes, setStopNotes] = useState("");
-  const [stopProjectId, setStopProjectId] = useState("");
+  const [stopAllocationType, setStopAllocationType] =
+    useState<AllocationType>(null);
+  const [stopAllocationId, setStopAllocationId] = useState("");
+  const [manualAllocationType, setManualAllocationType] =
+    useState<AllocationType>(null);
+  const [manualAllocationId, setManualAllocationId] = useState("");
 
   const [manualStart, setManualStart] = useState("");
   const [manualEnd, setManualEnd] = useState("");
@@ -313,7 +349,6 @@ export function TodayClient({
   const [manualLabel, setManualLabel] = useState("");
   const [manualCat, setManualCat] = useState("");
   const [manualQuality, setManualQuality] = useState<Quality>("useful");
-  const [manualProjectId, setManualProjectId] = useState("");
   const [focusTargetMin, setFocusTargetMin] = useState<number | null>(null);
   const [startIntent, setStartIntent] = useState("");
   const [stopTagIds, setStopTagIds] = useState<string[]>([]);
@@ -335,7 +370,7 @@ export function TodayClient({
 
   async function onStart() {
     if (!startCat) {
-      toast.error("Add a label first.");
+      toast.error("Pick a category first.");
       return;
     }
     const intent =
@@ -347,7 +382,7 @@ export function TodayClient({
     const cat = activeCats.find((c) => c.id === startCat);
     const nowIso = new Date().toISOString();
     const optimisticId = `optimistic-${Date.now()}`;
-    const prev = qc.getQueryData<Initial>(["today"]);
+    const prev = qc.getQueryData<Initial>(queryKeys.today.all);
     const optimisticRunning: TodayBlockRow = {
       id: optimisticId,
       startAt: nowIso,
@@ -362,9 +397,11 @@ export function TodayClient({
       baseCreditRate: 0,
       credits: null,
       tagNames: [],
+      focusTargetMinutes:
+        focusTargetMin != null && focusTargetMin > 0 ? focusTargetMin : null,
     };
     if (prev) {
-      qc.setQueryData<Initial>(["today"], {
+      qc.setQueryData<Initial>(queryKeys.today.all, {
         ...prev,
         running: optimisticRunning,
         runningElapsedSeconds: 0,
@@ -378,40 +415,46 @@ export function TodayClient({
     setStartIntent("");
 
     try {
-      const res = await startBlockAction(startCat, null, intent);
+      const res = await startBlockAction(
+        startCat,
+        null,
+        intent,
+        focusTargetMin,
+      );
       if (!res.ok) {
         // Roll back optimistic state and offer recovery.
-        if (prev) qc.setQueryData<Initial>(["today"], prev);
+        if (prev) qc.setQueryData<Initial>(queryKeys.today.all, prev);
         clearFocusSession();
         toast.error("A block is already running. Stop it first.");
-        void qc.invalidateQueries({ queryKey: ["today"] });
+        void qc.invalidateQueries({ queryKey: queryKeys.today.all });
         return;
       }
-      // Re-point the focus session to the real block id.
-      if (focusTargetMin != null && focusTargetMin > 0) {
-        writeFocusSession({ blockId: res.blockId, targetMinutes: focusTargetMin });
-      }
-      void qc.invalidateQueries({ queryKey: ["today"] });
+      clearFocusSession();
+      void qc.invalidateQueries({ queryKey: queryKeys.today.all });
     } catch {
-      if (prev) qc.setQueryData<Initial>(["today"], prev);
+      if (prev) qc.setQueryData<Initial>(queryKeys.today.all, prev);
       clearFocusSession();
       toast.error("Couldn't start the timer. Please try again.");
-      void qc.invalidateQueries({ queryKey: ["today"] });
+      void qc.invalidateQueries({ queryKey: queryKeys.today.all });
     }
   }
 
   async function onStopSubmit() {
     if (!running) return;
     if (!stopLabel.trim()) {
-      toast.error("Label is required.");
+      toast.error("Describe what you were doing in one line.");
       return;
     }
     const categoryId = stopCat || running.categoryId;
     if (!categoryId) {
-      toast.error("Label is required.");
+      toast.error("Pick a category.");
       return;
     }
-    const prev = qc.getQueryData<Initial>(["today"]);
+    const allocation = allocationToFields(
+      stopAllocationType,
+      stopAllocationId,
+    );
+    const prev = qc.getQueryData<Initial>(queryKeys.today.all);
     const stoppedBlock = buildStoppedBlock(running, {
       categoryId,
       label: stopLabel,
@@ -419,7 +462,7 @@ export function TodayClient({
     });
     if (prev) {
       qc.setQueryData<Initial>(
-        ["today"],
+        queryKeys.today.all,
         appendCompletedBlock(prev, stoppedBlock),
       );
     }
@@ -436,7 +479,7 @@ export function TodayClient({
         label: stopLabel,
         quality: stopQuality,
         notes: stopNotes || undefined,
-        projectId: stopProjectId || null,
+        ...allocation,
         tagIds: stopTagIds,
       });
       if (stopped.luckyBonus) {
@@ -444,19 +487,26 @@ export function TodayClient({
       } else {
         toast.success("Saved");
       }
-      void qc.invalidateQueries({ queryKey: ["today"] });
+      void qc.invalidateQueries({ queryKey: queryKeys.today.all });
+      void qc.invalidateQueries({ queryKey: queryKeys.habits.manage });
+      void qc.invalidateQueries({ queryKey: queryKeys.week.all });
+      void qc.invalidateQueries({ queryKey: queryKeys.stats.all });
     } catch (e) {
-      if (prev) qc.setQueryData<Initial>(["today"], prev);
+      if (prev) qc.setQueryData<Initial>(queryKeys.today.all, prev);
       toast.error(e instanceof Error ? e.message : "Could not stop timer");
     }
   }
 
   async function onManualSubmit() {
     if (!manualCat || !manualLabel.trim()) {
-      toast.error("Category and label required.");
+      toast.error("Category and description required.");
       return;
     }
-    const prev = qc.getQueryData<Initial>(["today"]);
+    const manualAllocation = allocationToFields(
+      manualAllocationType,
+      manualAllocationId,
+    );
+    const prev = qc.getQueryData<Initial>(queryKeys.today.all);
     const tempId = createTempId();
     const cat = data.categories.find((c) => c.id === manualCat);
     const dayKey = new Intl.DateTimeFormat("en-CA", {
@@ -477,8 +527,9 @@ export function TodayClient({
         baseCreditRate: 0,
         credits: null,
         tagNames: [],
+        ...manualAllocation,
       };
-      qc.setQueryData<Initial>(["today"], insertBlock(prev, optimisticBlock));
+      qc.setQueryData<Initial>(queryKeys.today.all, insertBlock(prev, optimisticBlock));
     }
     setManualOpen(false);
     setManualLabel("");
@@ -490,22 +541,23 @@ export function TodayClient({
       endTime: manualEnd,
       label: manualLabel,
       quality: manualQuality,
-      projectId: manualProjectId || null,
+      ...manualAllocation,
       tagIds: manualTagIds,
     });
     if (!res.ok) {
-      if (prev) qc.setQueryData<Initial>(["today"], prev);
+      if (prev) qc.setQueryData<Initial>(queryKeys.today.all, prev);
       toast.error(res.error);
       return;
     }
     toast.success("Block added");
-    void qc.invalidateQueries({ queryKey: ["today"] });
+    void qc.invalidateQueries({ queryKey: queryKeys.today.all });
+    void qc.invalidateQueries({ queryKey: queryKeys.stats.all });
   }
 
   async function onEditSave() {
     if (!editRow || !editRow.endAt) return;
     if (!editRow.label?.trim()) {
-      toast.error("Label required.");
+      toast.error("Describe what you were doing in one line.");
       return;
     }
     const q = normalizeQuality(editRow.quality);
@@ -513,11 +565,11 @@ export function TodayClient({
       toast.error("Quality required for completed blocks.");
       return;
     }
-    const prev = qc.getQueryData<Initial>(["today"]);
+    const prev = qc.getQueryData<Initial>(queryKeys.today.all);
     const saved = { ...editRow, quality: q };
     if (prev) {
       qc.setQueryData<Initial>(
-        ["today"],
+        queryKeys.today.all,
         updateBlockInList(prev, editRow.id, () => saved),
       );
     }
@@ -530,22 +582,26 @@ export function TodayClient({
       endAt: editRow.endAt,
       label: editRow.label,
       quality: q,
+      projectId: editRow.projectId ?? null,
+      habitId: editRow.habitId ?? null,
+      taskId: editRow.taskId ?? null,
     });
     if (!res.ok) {
-      if (prev) qc.setQueryData<Initial>(["today"], prev);
+      if (prev) qc.setQueryData<Initial>(queryKeys.today.all, prev);
       toast.error(res.error);
       return;
     }
     toast.success("Updated");
-    void qc.invalidateQueries({ queryKey: ["today"] });
+    void qc.invalidateQueries({ queryKey: queryKeys.today.all });
+    void qc.invalidateQueries({ queryKey: queryKeys.stats.all });
   }
 
   async function onDeleteConfirm() {
     if (!deleteRow || deleteBusy) return;
     const id = deleteRow.id;
-    const prev = qc.getQueryData<Initial>(["today"]);
+    const prev = qc.getQueryData<Initial>(queryKeys.today.all);
     if (prev) {
-      qc.setQueryData<Initial>(["today"], {
+      qc.setQueryData<Initial>(queryKeys.today.all, {
         ...prev,
         blocks: prev.blocks.filter((b) => b.id !== id),
       });
@@ -554,15 +610,15 @@ export function TodayClient({
     try {
       const res = await deleteBlockAction(id);
       if (!res.ok) {
-        if (prev) qc.setQueryData<Initial>(["today"], prev);
+        if (prev) qc.setQueryData<Initial>(queryKeys.today.all, prev);
         toast.error(res.error);
         return;
       }
       setDeleteRow(null);
       toast.success("Deleted");
-      void qc.invalidateQueries({ queryKey: ["today"] });
+      void qc.invalidateQueries({ queryKey: queryKeys.today.all });
     } catch (e) {
-      if (prev) qc.setQueryData<Initial>(["today"], prev);
+      if (prev) qc.setQueryData<Initial>(queryKeys.today.all, prev);
       toast.error(e instanceof Error ? e.message : "Could not delete block");
     } finally {
       setDeleteBusy(false);
@@ -576,7 +632,9 @@ export function TodayClient({
     setStopCat(running.categoryId);
     setStopLabel(running.label ?? running.statedIntent ?? "");
     setStopQuality(normalizeQuality(running.quality) ?? "useful");
-    setStopProjectId("");
+    const alloc = fieldsToAllocation(running);
+    setStopAllocationType(alloc.type);
+    setStopAllocationId(alloc.entityId);
     setStopTagIds([]);
     setStopOpen(true);
   }
@@ -587,7 +645,9 @@ export function TodayClient({
     setStopCat(running.categoryId);
     setStopLabel(running.label ?? running.statedIntent ?? "");
     setStopQuality(normalizeQuality(running.quality) ?? "useful");
-    setStopProjectId("");
+    const alloc = fieldsToAllocation(running);
+    setStopAllocationType(alloc.type);
+    setStopAllocationId(alloc.entityId);
     setStopTagIds([]);
     setStopOpen(true);
   }, [running]);
@@ -601,14 +661,14 @@ export function TodayClient({
       toast.error(res.error ?? "No off days in bank");
     } else if (res.ok) {
       toast.success("Today is an off day");
-      void qc.invalidateQueries({ queryKey: ["today"] });
+      void qc.invalidateQueries({ queryKey: queryKeys.today.all });
     }
   }
 
   return (
     <>
       <AmRundownModal
-        data={amRundown}
+        initialData={amRundown}
         runningBlockId={running?.id ?? null}
         onNeedStop={openStopDialog}
       />
@@ -622,6 +682,7 @@ export function TodayClient({
               blockId={running.id}
               startIso={running.startAt}
               serverSeconds={data.runningElapsedSeconds}
+              serverFocusTargetMinutes={running.focusTargetMinutes}
               size="focus"
               onFocusGoalComplete={onFocusGoalComplete}
             />
@@ -633,11 +694,17 @@ export function TodayClient({
           stopQuality={stopQuality}
           setStopQuality={setStopQuality}
           activeProjects={data.activeProjects}
-          stopProjectId={stopProjectId}
-          setStopProjectId={setStopProjectId}
+          activeHabits={data.activeHabits}
+          openTasks={data.openTasks}
+          stopAllocationType={stopAllocationType}
+          setStopAllocationType={setStopAllocationType}
+          stopAllocationId={stopAllocationId}
+          setStopAllocationId={setStopAllocationId}
           onOpenStop={() => {
             setStopCat(running.categoryId);
-            setStopProjectId("");
+            const alloc = fieldsToAllocation(running);
+            setStopAllocationType(alloc.type);
+            setStopAllocationId(alloc.entityId);
             setStopTagIds([]);
           }}
           onStopSubmit={() => void onStopSubmit()}
@@ -647,7 +714,7 @@ export function TodayClient({
         open={offDayCheckOpen}
         onOpenChange={setOffDayCheckOpen}
         offDaysIn30={offDaysIn30}
-        onDone={() => void qc.invalidateQueries({ queryKey: ["today"] })}
+        onDone={() => void qc.invalidateQueries({ queryKey: queryKeys.today.all })}
       />
       <div
         className={`flex flex-1 flex-col gap-4 pb-8 ${running ? "hidden" : ""}`}
@@ -655,7 +722,7 @@ export function TodayClient({
       <TodayV02Panel
         extras={extras}
         runningBlockId={running?.id ?? null}
-        yesterdayNeedsClose={amRundown.mode === "unclosed"}
+        yesterdayNeedsClose={amRundownLive.mode === "unclosed"}
         onNeedStop={openStopDialog}
       />
 
@@ -761,7 +828,7 @@ export function TodayClient({
           </select>
           {isStartDeepWork ? (
             <label className="text-[12px] text-tk-ink-2">
-              What are you doing in this block?
+              What will you be doing? (one line)
               <input
                 className="mt-1 w-full rounded-xl border border-tk-line bg-tk-surface-2 px-3 py-2 text-tk-ink"
                 value={startIntent}
@@ -842,17 +909,24 @@ export function TodayClient({
                       ))}
                     </select>
                   </label>
-                  <ProjectPicker
+                  <AllocationPicker
+                    type={manualAllocationType}
+                    entityId={manualAllocationId}
+                    onChange={(type, id) => {
+                      setManualAllocationType(type);
+                      setManualAllocationId(id);
+                    }}
                     projects={data.activeProjects}
-                    value={manualProjectId}
-                    onChange={setManualProjectId}
+                    habits={data.activeHabits}
+                    tasks={data.openTasks}
                   />
                   <label className="text-[12px] text-tk-ink-2">
-                    Label
+                    What were you doing? (one line)
                     <input
                       className="mt-1 w-full rounded-xl border border-tk-line bg-tk-surface-2 px-3 py-2 text-tk-ink"
                       value={manualLabel}
                       onChange={(e) => setManualLabel(e.target.value)}
+                      placeholder="Brief description"
                     />
                   </label>
                   <div>
@@ -869,7 +943,7 @@ export function TodayClient({
                       selectedIds={manualTagIds}
                       onChange={setManualTagIds}
                       onTagsChange={() =>
-                        void qc.invalidateQueries({ queryKey: ["today"] })
+                        void qc.invalidateQueries({ queryKey: queryKeys.today.all })
                       }
                     />
                   ) : null}
@@ -932,7 +1006,7 @@ export function TodayClient({
                     style={{ background: b.categoryColor }}
                   />
                   <span className="truncate text-[14px] font-medium text-tk-ink">
-                    {b.label || "(no label)"}
+                    {b.label || "(no description)"}
                   </span>
                   {b.manualEntry ? (
                     <span className="chip-line shrink-0 text-[10px]">Manual</span>
@@ -942,6 +1016,9 @@ export function TodayClient({
                   {b.categoryName} · {fmt(b.startAt, tz)}
                   {b.endAt ? ` → ${fmt(b.endAt, tz)}` : " · running"}
                   {b.quality ? ` · ${qualityLabel(b.quality)}` : ""}
+                  {b.allocationName
+                    ? ` · ${b.allocationName}${b.allocationLabel ? ` (${b.allocationLabel})` : ""}`
+                    : ""}
                 </div>
                 {data.tagsEnabled && b.tagNames.length > 0 ? (
                   <div className="mt-1.5 flex flex-wrap gap-1">
@@ -961,6 +1038,11 @@ export function TodayClient({
                   >
                     {b.credits < 0 ? "" : "+"}
                     {formatCredits(b.credits)} credits
+                    {b.allocationLabel ? (
+                      <span className="ml-1 text-[11px] text-tk-ink-3">
+                        ({b.allocationLabel})
+                      </span>
+                    ) : null}
                   </div>
                 ) : null}
               </div>
@@ -1011,7 +1093,7 @@ export function TodayClient({
               Delete time block?
             </Dialog.Title>
             <p className="mt-2 text-[13px] text-tk-ink-2">
-              {deleteRow?.label || "(no label)"} will be removed from today&apos;s
+              {deleteRow?.label || "(no description)"} will be removed from today&apos;s
               log. This cannot be undone.
             </p>
             <div className="mt-5 flex justify-end gap-2">
@@ -1047,7 +1129,10 @@ export function TodayClient({
             {editRow ? (
               <EditBlockForm
                 row={editRow}
-                categoryOptions={catOptions(editRow.categoryId)}
+                categoryOptions={editCategoryOptions(editRow)}
+                projects={data.activeProjects}
+                habits={data.activeHabits}
+                tasks={data.openTasks}
                 onChange={setEditRow}
                 onSave={() => void onEditSave()}
               />
@@ -1073,6 +1158,9 @@ export function TodayClient({
 function EditBlockForm({
   row,
   categoryOptions,
+  projects,
+  habits,
+  tasks,
   onChange,
   onSave,
 }: {
@@ -1083,9 +1171,13 @@ function EditBlockForm({
     color: string;
     archived: boolean;
   }[];
+  projects: { id: string; name: string }[];
+  habits: { id: string; name: string }[];
+  tasks: { id: string; title: string }[];
   onChange: (r: TodayBlockRow) => void;
   onSave: () => void;
 }) {
+  const alloc = fieldsToAllocation(row);
   const toLocal = (iso: string) => {
     const d = new Date(iso);
     const pad = (n: number) => String(n).padStart(2, "0");
@@ -1145,12 +1237,23 @@ function EditBlockForm({
           ))}
         </select>
       </label>
+      <AllocationPicker
+        type={alloc.type}
+        entityId={alloc.entityId}
+        onChange={(type, id) =>
+          onChange({ ...row, ...allocationToFields(type, id) })
+        }
+        projects={projects}
+        habits={habits}
+        tasks={tasks}
+      />
       <label className="text-[12px] text-tk-ink-2">
-        Label
+        What were you doing? (one line)
         <input
           className="mt-1 w-full rounded-xl border border-tk-line bg-tk-surface-2 px-3 py-2 text-tk-ink"
           value={row.label ?? ""}
           onChange={(e) => onChange({ ...row, label: e.target.value })}
+          placeholder="Brief description"
         />
       </label>
       <div>

@@ -1,4 +1,4 @@
-/** Optional "focus session" length for the current running block (v0.1 UI-only; not in DB). */
+/** Optional "focus session" length — prefer server `focusTargetMinutes` on the block; localStorage is optimistic fallback only. */
 export const FOCUS_SESSION_STORAGE_KEY = "tk-focus-session-v1";
 
 export type FocusSessionPayload = {

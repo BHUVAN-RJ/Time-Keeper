@@ -1,3 +1,7 @@
+import {
+  allocationCreditMultiplier,
+  type BlockAllocation,
+} from "@/lib/allocation-bonus";
 import type { Quality } from "@/lib/quality";
 import { normalizeQuality, qualityCreditMultiplier } from "@/lib/quality";
 
@@ -9,6 +13,8 @@ export function blockCreditsMinutes(params: {
   endAt: Date;
   baseCreditRatePerHour: number;
   quality: Quality | string;
+  allocation?: BlockAllocation;
+  randomBonusApplied?: boolean;
 }): number {
   const q = normalizeQuality(
     typeof params.quality === "string" ? params.quality : params.quality,
@@ -16,7 +22,13 @@ export function blockCreditsMinutes(params: {
   if (!q) return 0;
   const hours =
     (params.endAt.getTime() - params.startAt.getTime()) / (1000 * 60 * 60);
-  return hours * params.baseCreditRatePerHour * qualityCreditMultiplier(q);
+  let raw =
+    hours *
+    params.baseCreditRatePerHour *
+    qualityCreditMultiplier(q) *
+    allocationCreditMultiplier(params.allocation ?? {});
+  if (params.randomBonusApplied) raw *= 1.5;
+  return raw;
 }
 
 export function formatCredits(n: number): string {

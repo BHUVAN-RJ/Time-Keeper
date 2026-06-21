@@ -4,15 +4,19 @@ import { auth } from "@/auth";
 import { db } from "@/db";
 import {
   categories,
+  habits,
   tags,
   tasks,
   timeBlocks,
   timeBlockTags,
   userPreferences,
 } from "@/db/schema";
-import { and, desc, eq, gte, inArray, isNull, lte, or } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lte, ne, or } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { completeHabitTodayAction } from "@/actions/habits";
 import { tryApplyVariableBonus } from "@/lib/credits-bonus";
+import { allocationBonusLabel } from "@/lib/allocation-bonus";
+import { normalizeBlockAllocation } from "@/lib/block-allocation";
 import { blockCreditsMinutes } from "@/lib/credits";
 import { isQuality, normalizeQuality, type Quality } from "@/lib/quality";
 
@@ -64,10 +68,18 @@ export type TodayBlockRow = {
   baseCreditRate: number;
   credits: number | null;
   tagNames: string[];
+  projectId?: string | null;
+  taskId?: string | null;
+  habitId?: string | null;
+  focusTargetMinutes?: number | null;
+  allocationLabel?: string | null;
+  allocationName?: string | null;
 };
 
 export async function getTodayData(): Promise<{
   activeProjects: { id: string; name: string }[];
+  activeHabits: { id: string; name: string }[];
+  openTasks: { id: string; title: string }[];
   timezone: string;
   /** "Thursday, May 15" style in user TZ — computed on server to avoid hydration drift */
   calendarHeadline: string;
@@ -89,6 +101,30 @@ export async function getTodayData(): Promise<{
   // running block always belongs to the current business day (US2).
   await splitRunningBlockAtBoundary(userId, timezone);
   const activeProjects = await listActiveProjects();
+  const [activeHabitRows, openTaskRows] = await Promise.all([
+    db
+      .select({ id: habits.id, name: habits.name })
+      .from(habits)
+      .where(
+        and(
+          eq(habits.userId, userId),
+          eq(habits.active, true),
+          isNull(habits.archivedAt),
+        ),
+      )
+      .orderBy(habits.name),
+    db
+      .select({ id: tasks.id, title: tasks.title })
+      .from(tasks)
+      .where(
+        and(
+          eq(tasks.userId, userId),
+          ne(tasks.status, "completed"),
+          ne(tasks.status, "dropped"),
+        ),
+      )
+      .orderBy(tasks.title),
+  ]);
   const now = new Date();
   const calendarHeadline = new Intl.DateTimeFormat("en-US", {
     timeZone: timezone,
@@ -106,7 +142,7 @@ export async function getTodayData(): Promise<{
       archived: categories.archived,
     })
     .from(categories)
-    .where(eq(categories.userId, userId));
+    .where(and(eq(categories.userId, userId), eq(categories.archived, false)));
 
   const runningRows = await db
     .select({
@@ -134,6 +170,10 @@ export async function getTodayData(): Promise<{
     .where(overlap)
     .orderBy(desc(timeBlocks.startAt));
 
+  const nameByProject = new Map(activeProjects.map((p) => [p.id, p.name]));
+  const nameByHabit = new Map(activeHabitRows.map((h) => [h.id, h.name]));
+  const nameByTask = new Map(openTaskRows.map((t) => [t.id, t.title]));
+
   const mapRow = (
     block: typeof timeBlocks.$inferSelect,
     cat: typeof categories.$inferSelect,
@@ -143,16 +183,25 @@ export async function getTodayData(): Promise<{
     if (block.endAt && block.quality) {
       const q = normalizeQuality(block.quality);
       if (q) {
-        let raw = blockCreditsMinutes({
+        const raw = blockCreditsMinutes({
           startAt: new Date(block.startAt),
           endAt: new Date(block.endAt),
           baseCreditRatePerHour: cat.baseCreditRate,
           quality: q,
+          allocation: block,
+          randomBonusApplied: block.randomBonusApplied,
         });
-        if (block.randomBonusApplied) raw *= 1.5;
         credits = cat.isFreeTime ? -raw : raw;
       }
     }
+    const allocationLabel = allocationBonusLabel(block);
+    const allocationName = block.projectId
+      ? nameByProject.get(block.projectId) ?? null
+      : block.habitId
+        ? nameByHabit.get(block.habitId) ?? null
+        : block.taskId
+          ? nameByTask.get(block.taskId) ?? null
+          : null;
     return {
       id: block.id,
       startAt: new Date(block.startAt).toISOString(),
@@ -168,6 +217,12 @@ export async function getTodayData(): Promise<{
       baseCreditRate: cat.baseCreditRate,
       credits,
       tagNames,
+      projectId: block.projectId,
+      taskId: block.taskId,
+      habitId: block.habitId,
+      focusTargetMinutes: block.focusTargetMinutes,
+      allocationLabel,
+      allocationName,
     };
   };
 
@@ -259,6 +314,8 @@ export async function getTodayData(): Promise<{
 
   return {
     activeProjects,
+    activeHabits: activeHabitRows,
+    openTasks: openTaskRows,
     timezone,
     calendarHeadline,
     runningElapsedSeconds,
@@ -323,7 +380,9 @@ export async function splitRunningBlockAtBoundary(
       userId,
       categoryId: running.categoryId,
       taskId: running.taskId ?? null,
+      habitId: running.habitId ?? null,
       projectId: running.projectId ?? null,
+      focusTargetMinutes: running.focusTargetMinutes ?? null,
       startAt: boundary,
       label: running.label,
       statedIntent: running.statedIntent ?? null,
@@ -345,11 +404,13 @@ export async function startBlockAction(
   categoryId: string,
   taskId?: string | null,
   statedIntent?: string | null,
+  focusTargetMinutes?: number | null,
 ) {
   const { userId } = await requireUser();
   const now = new Date();
   let label: string | null = null;
   let projectId: string | null = null;
+  const resolvedTaskId: string | null = taskId ?? null;
   if (taskId) {
     const [task] = await db
       .select()
@@ -365,14 +426,19 @@ export async function startBlockAction(
       .set({ status: "in_progress", updatedAt: now })
       .where(and(eq(tasks.id, taskId), eq(tasks.userId, userId)));
   }
+  const focus =
+    focusTargetMinutes != null && focusTargetMinutes > 0
+      ? Math.min(focusTargetMinutes, 12 * 60)
+      : null;
   try {
     const inserted = await db
       .insert(timeBlocks)
       .values({
         userId,
         categoryId,
-        taskId: taskId ?? null,
+        taskId: resolvedTaskId,
         projectId,
+        focusTargetMinutes: focus,
         startAt: now,
         label,
         statedIntent: statedIntent?.trim() || null,
@@ -400,15 +466,17 @@ export async function startBlockAction(
 export async function stopBlockAction(input: {
   blockId: string;
   categoryId: string;
-  /** Optional: classification is the Label (categoryId); free-text label is deprecated. */
   label?: string;
   quality: Quality;
   notes?: string;
   projectId?: string | null;
+  habitId?: string | null;
+  taskId?: string | null;
   tagIds?: string[];
 }): Promise<{ ok: true; luckyBonus?: boolean }> {
   const { userId, timezone } = await requireUser();
   const now = new Date();
+  const allocation = normalizeBlockAllocation(input);
   const [running] = await db
     .select()
     .from(timeBlocks)
@@ -438,7 +506,9 @@ export async function stopBlockAction(input: {
     )
     .limit(1);
 
-  const projectId = input.projectId?.trim() || null;
+  const projectId = allocation.projectId;
+  const taskId = allocation.taskId ?? running.taskId ?? null;
+  const habitId = allocation.habitId;
 
   await db
     .update(timeBlocks)
@@ -449,6 +519,8 @@ export async function stopBlockAction(input: {
       quality: input.quality,
       notes: input.notes?.trim() || null,
       projectId,
+      taskId,
+      habitId,
       updatedAt: now,
     })
     .where(
@@ -473,8 +545,11 @@ export async function stopBlockAction(input: {
     luckyBonus = bonus.applied;
   }
 
-  if (running?.taskId) {
-    await syncTaskActualMinutes(running.taskId, userId);
+  if (taskId) {
+    await syncTaskActualMinutes(taskId, userId);
+  }
+  if (habitId) {
+    await completeHabitTodayAction(habitId);
   }
   if (input.tagIds?.length && (await getTagsEnabledForUser(userId))) {
     await setBlockTags(userId, input.blockId, input.tagIds);
@@ -482,6 +557,9 @@ export async function stopBlockAction(input: {
   await clearTimerActivity(userId);
   revalidatePath("/today");
   revalidatePath("/tasks");
+  revalidatePath("/habits");
+  revalidatePath("/week");
+  revalidatePath("/stats");
   return { ok: true as const, luckyBonus };
 }
 
@@ -569,9 +647,12 @@ export async function createManualBlockAction(input: {
   quality: Quality;
   notes?: string;
   projectId?: string | null;
+  habitId?: string | null;
+  taskId?: string | null;
   tagIds?: string[];
 }): Promise<BlockActionResult> {
   const { userId, timezone } = await requireUser();
+  const allocation = normalizeBlockAllocation(input);
   const startTime = input.startTime.trim();
   const endTime = input.endTime.trim();
   if (!isHm(startTime) || !isHm(endTime)) {
@@ -598,7 +679,9 @@ export async function createManualBlockAction(input: {
     .values({
       userId,
       categoryId: input.categoryId,
-      projectId: input.projectId?.trim() || null,
+      projectId: allocation.projectId,
+      habitId: allocation.habitId,
+      taskId: allocation.taskId,
       startAt: start,
       endAt: end,
       label: input.label.trim(),
@@ -617,7 +700,11 @@ export async function createManualBlockAction(input: {
   ) {
     await setBlockTags(userId, inserted[0].id, input.tagIds);
   }
+  if (allocation.habitId) {
+    await completeHabitTodayAction(allocation.habitId);
+  }
   revalidatePath("/today");
+  revalidatePath("/habits");
   return { ok: true, id: inserted[0]!.id };
 }
 
@@ -630,8 +717,11 @@ export async function updateBlockAction(input: {
   quality: Quality | null;
   notes?: string;
   projectId?: string | null;
+  habitId?: string | null;
+  taskId?: string | null;
 }): Promise<BlockActionResult> {
   const { userId } = await requireUser();
+  const allocation = normalizeBlockAllocation(input);
   const start = new Date(input.startAt);
   const end = input.endAt ? new Date(input.endAt) : null;
   if (end && !(end > start)) {
@@ -650,7 +740,9 @@ export async function updateBlockAction(input: {
       label: input.label.trim(),
       quality: input.quality,
       notes: input.notes?.trim() || null,
-      projectId: input.projectId?.trim() || null,
+      projectId: allocation.projectId,
+      habitId: allocation.habitId,
+      taskId: allocation.taskId,
       updatedAt: now,
     })
     .where(and(eq(timeBlocks.id, input.blockId), eq(timeBlocks.userId, userId)));

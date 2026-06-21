@@ -1,9 +1,11 @@
-import { and, count, eq } from "drizzle-orm";
+import { and, count, eq, inArray, notInArray } from "drizzle-orm";
 import { db } from "@/db";
 import { categories, timeBlocks } from "@/db/schema";
 import {
-  CHORES_CATEGORY_NAME,
+  APPROVED_CATEGORY_NAMES,
+  COOKING_CLEANING_CATEGORY_NAME,
   DEFAULT_CATEGORIES,
+  LEGACY_CHORES_NAME,
 } from "./default-categories";
 import { ensureDefaultScheduleGoals } from "./ensure-schedule-goals";
 
@@ -17,6 +19,71 @@ async function migrateLegacyChoresQuality(
     .where(
       and(eq(timeBlocks.userId, userId), eq(timeBlocks.quality, "chores")),
     );
+}
+
+async function archiveNonApprovedCategories(userId: string): Promise<void> {
+  await db
+    .update(categories)
+    .set({ archived: true })
+    .where(
+      and(
+        eq(categories.userId, userId),
+        notInArray(categories.name, [...APPROVED_CATEGORY_NAMES]),
+      ),
+    );
+
+  await db
+    .update(categories)
+    .set({ archived: false })
+    .where(
+      and(
+        eq(categories.userId, userId),
+        inArray(categories.name, [...APPROVED_CATEGORY_NAMES]),
+      ),
+    );
+}
+
+async function renameLegacyChores(userId: string): Promise<void> {
+  const legacy = await db
+    .select({ id: categories.id })
+    .from(categories)
+    .where(
+      and(eq(categories.userId, userId), eq(categories.name, LEGACY_CHORES_NAME)),
+    )
+    .limit(1);
+  if (!legacy[0]) return;
+
+  const existingNew = await db
+    .select({ id: categories.id })
+    .from(categories)
+    .where(
+      and(
+        eq(categories.userId, userId),
+        eq(categories.name, COOKING_CLEANING_CATEGORY_NAME),
+      ),
+    )
+    .limit(1);
+  if (existingNew[0] && existingNew[0].id !== legacy[0].id) {
+    await db
+      .update(timeBlocks)
+      .set({ categoryId: existingNew[0].id })
+      .where(
+        and(
+          eq(timeBlocks.userId, userId),
+          eq(timeBlocks.categoryId, legacy[0].id),
+        ),
+      );
+    await db
+      .update(categories)
+      .set({ archived: true })
+      .where(eq(categories.id, legacy[0].id));
+    return;
+  }
+
+  await db
+    .update(categories)
+    .set({ name: COOKING_CLEANING_CATEGORY_NAME, archived: false })
+    .where(eq(categories.id, legacy[0].id));
 }
 
 export async function ensureDefaultCategories(
@@ -58,16 +125,22 @@ export async function ensureDefaultCategories(
     );
   }
 
-  const choresCategory = await db
+  await renameLegacyChores(userId);
+  await archiveNonApprovedCategories(userId);
+
+  const cookingCategory = await db
     .select({ id: categories.id })
     .from(categories)
     .where(
-      and(eq(categories.userId, userId), eq(categories.name, CHORES_CATEGORY_NAME)),
+      and(
+        eq(categories.userId, userId),
+        eq(categories.name, COOKING_CLEANING_CATEGORY_NAME),
+      ),
     )
     .limit(1);
 
-  if (choresCategory[0]) {
-    await migrateLegacyChoresQuality(userId, choresCategory[0].id);
+  if (cookingCategory[0]) {
+    await migrateLegacyChoresQuality(userId, cookingCategory[0].id);
   }
 
   await ensureDefaultScheduleGoals(userId, timezone);

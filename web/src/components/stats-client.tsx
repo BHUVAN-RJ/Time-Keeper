@@ -266,6 +266,11 @@ export function StatsClient({ data }: { data: StatsData }) {
         <div className="mono mt-1 text-[24px] font-semibold text-tk-honey">
           {formatCredits(data.creditBalance)}
         </div>
+        {data.allocationBonusCredits > 0 ? (
+          <p className="mt-1 text-[12px] text-tk-ink-3">
+            Includes {formatCredits(data.allocationBonusCredits)} from project/task/habit bonuses
+          </p>
+        ) : null}
       </div>
 
       <div className="card p-4">

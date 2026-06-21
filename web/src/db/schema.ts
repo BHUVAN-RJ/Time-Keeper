@@ -328,10 +328,12 @@ export const timeBlocks = sqliteTable(
     notes: text("notes"),
     manualEntry: integer("manual_entry", { mode: "boolean" }).notNull().default(false),
     taskId: text("task_id").references(() => tasks.id, { onDelete: "set null" }),
+    habitId: text("habit_id"),
     habitCompletionId: text("habit_completion_id"),
     projectId: text("project_id").references(() => projects.id, {
       onDelete: "set null",
     }),
+    focusTargetMinutes: integer("focus_target_minutes"),
     randomBonusApplied: integer("random_bonus_applied", { mode: "boolean" })
       .notNull()
       .default(false),
@@ -608,6 +610,10 @@ export const timeBlocksRelations = relations(timeBlocks, ({ one }) => ({
     fields: [timeBlocks.projectId],
     references: [projects.id],
   }),
+  habit: one(habits, {
+    fields: [timeBlocks.habitId],
+    references: [habits.id],
+  }),
 }));
 
 export const habitsRelations = relations(habits, ({ one, many }) => ({
@@ -664,6 +670,37 @@ export const remindersRelations = relations(reminders, ({ one }) => ({
     references: [tasks.id],
   }),
 }));
+
+export const shopItems = sqliteTable("shop_items", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  slug: text("slug").notNull().unique(),
+  name: text("name").notNull(),
+  description: text("description"),
+  costPoints: integer("cost_points").notNull(),
+  active: integer("active", { mode: "boolean" }).notNull().default(true),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdAt: integer("created_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
+
+export const shopRedemptions = sqliteTable("shop_redemptions", {
+  id: text("id")
+    .primaryKey()
+    .$defaultFn(() => crypto.randomUUID()),
+  userId: text("user_id")
+    .notNull()
+    .references(() => users.id, { onDelete: "cascade" }),
+  shopItemId: text("shop_item_id")
+    .notNull()
+    .references(() => shopItems.id),
+  pointsSpent: integer("points_spent").notNull(),
+  redeemedAt: integer("redeemed_at", { mode: "timestamp_ms" })
+    .notNull()
+    .$defaultFn(() => new Date()),
+});
 
 export const googleCalendarAccounts = sqliteTable(
   "google_calendar_accounts",

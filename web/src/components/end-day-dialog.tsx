@@ -12,6 +12,7 @@ import {
 import { formatScoreBreakdown } from "@/lib/score-breakdown";
 import { formatCredits } from "@/lib/credits";
 import { formatOverworkMinutes } from "@/lib/overwork";
+import { queryKeys } from "@/lib/queries/keys";
 import { WeeklyReviewNudgeModal } from "@/components/weekly-review-nudge-modal";
 
 type Preview = Awaited<ReturnType<typeof getEndDayPreview>>;
@@ -88,9 +89,11 @@ function EndDayDialogBody({
   const [preview, setPreview] = useState<Preview | null>(null);
 
   function refreshAfterEndDay() {
-    void qc.invalidateQueries({ queryKey: ["today"] });
-    void qc.invalidateQueries({ queryKey: ["week"] });
-    void qc.invalidateQueries({ queryKey: ["tasks"] });
+    void qc.invalidateQueries({ queryKey: queryKeys.amRundown.all });
+    void qc.invalidateQueries({ queryKey: queryKeys.today.all });
+    void qc.invalidateQueries({ queryKey: queryKeys.week.all });
+    void qc.invalidateQueries({ queryKey: queryKeys.tasks.all });
+    void qc.invalidateQueries({ queryKey: queryKeys.stats.all });
   }
   const [step, setStep] = useState(0);
   const [breakdownOpen, setBreakdownOpen] = useState(false);

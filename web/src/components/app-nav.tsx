@@ -11,6 +11,7 @@ const MAIN_NAV = [
   { href: "/today", label: "Today" },
   { href: "/week", label: "Week" },
   { href: "/tasks", label: "Tasks" },
+  { href: "/shop", label: "Shop" },
   { href: "/stats", label: "Stats" },
 ] as const;
 

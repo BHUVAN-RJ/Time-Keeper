@@ -2,9 +2,11 @@
 
 import { Square, X } from "lucide-react";
 import { useEffect, useRef } from "react";
-import { ProjectPicker } from "@/components/project-picker";
+import {
+  AllocationPicker,
+} from "@/components/allocation-picker";
+import type { AllocationType } from "@/components/allocation-picker-types";
 import { QualityPicker } from "@/components/quality-picker";
-import type { ProjectOption } from "@/components/project-picker";
 import { normalizeQuality, type Quality } from "@/lib/quality";
 
 type Running = {
@@ -28,8 +30,12 @@ export function FocusModeView({
   onOpenStop,
   onStopSubmit,
   activeProjects = [],
-  stopProjectId,
-  setStopProjectId,
+  activeHabits = [],
+  openTasks = [],
+  stopAllocationType,
+  setStopAllocationType,
+  stopAllocationId,
+  setStopAllocationId,
 }: {
   running: Running;
   clock: React.ReactNode;
@@ -41,9 +47,13 @@ export function FocusModeView({
   setStopQuality: (v: Quality) => void;
   onOpenStop?: () => void;
   onStopSubmit: () => void;
-  activeProjects?: ProjectOption[];
-  stopProjectId: string;
-  setStopProjectId: (v: string) => void;
+  activeProjects?: { id: string; name: string }[];
+  activeHabits?: { id: string; name: string }[];
+  openTasks?: { id: string; title: string }[];
+  stopAllocationType: AllocationType;
+  setStopAllocationType: (v: AllocationType) => void;
+  stopAllocationId: string;
+  setStopAllocationId: (v: string) => void;
 }) {
   const labelRef = useRef<HTMLInputElement>(null);
 
@@ -64,6 +74,7 @@ export function FocusModeView({
     setStopOpen(false);
   }
 
+
   return (
     <div className="fixed inset-0 z-[100] flex flex-col bg-tk-bg-deep">
       <div className="pointer-events-none flex flex-1 flex-col items-center justify-center px-6 pb-28 pt-16">
@@ -72,9 +83,9 @@ export function FocusModeView({
             <span className="pulse-dot h-2 w-2 shrink-0 rounded-full bg-tk-honey" />
             {running.categoryName}
           </div>
-          {running.label ? (
+          {running.label || running.statedIntent ? (
             <p className="mt-3 max-w-md text-[15px] text-tk-ink-2">
-              {running.label}
+              {running.label ?? running.statedIntent}
             </p>
           ) : null}
           <div className="mt-10 flex w-full flex-col items-center justify-center">
@@ -131,19 +142,25 @@ export function FocusModeView({
               <div className="mt-4 flex flex-col gap-3">
                 <p className="text-[12px] text-tk-ink-3">{running.categoryName}</p>
                 <label className="text-[12px] text-tk-ink-2">
-                  Label
+                  What were you doing? (one line)
                   <input
                     ref={labelRef}
                     className="mt-1 w-full rounded-xl border border-tk-line bg-tk-surface-2 px-3 py-2 text-tk-ink"
                     value={stopLabel}
                     onChange={(e) => setStopLabel(e.target.value)}
-                    placeholder="What did you work on?"
+                    placeholder="e.g. Draft Q3 OKRs"
                   />
                 </label>
-                <ProjectPicker
+                <AllocationPicker
+                  type={stopAllocationType}
+                  entityId={stopAllocationId}
+                  onChange={(type, id) => {
+                    setStopAllocationType(type);
+                    setStopAllocationId(id);
+                  }}
                   projects={activeProjects}
-                  value={stopProjectId}
-                  onChange={setStopProjectId}
+                  habits={activeHabits}
+                  tasks={openTasks}
                 />
                 <div>
                   <div className="text-[12px] text-tk-ink-2">Quality</div>

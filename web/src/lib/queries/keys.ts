@@ -20,4 +20,13 @@ export const queryKeys = {
   week: {
     all: ["week"] as const,
   },
+  amRundown: {
+    all: ["amRundown"] as const,
+  },
+  shop: {
+    all: ["shop"] as const,
+  },
+  stats: {
+    all: ["stats"] as const,
+  },
 } as const;

@@ -8,7 +8,11 @@ import {
   timeBlocks,
 } from "@/db/schema";
 import { overlapMinutes } from "@/lib/block-minutes";
-import { CHORES_CATEGORY_NAME } from "@/lib/default-categories";
+import { allocationCreditMultiplier } from "@/lib/allocation-bonus";
+import {
+  COOKING_CLEANING_CATEGORY_NAME,
+  LEGACY_CHORES_NAME,
+} from "@/lib/default-categories";
 import { normalizeQuality, qualityCreditMultiplier } from "@/lib/quality";
 import { getDayRangeUtc } from "@/lib/day-range";
 import { goalsForDay } from "@/lib/ensure-schedule-goals";
@@ -126,7 +130,11 @@ function creditsForDay(rows: BlockRow[], date: string, timezone: string) {
     );
     if (mins <= 0) continue;
     const hours = mins / 60;
-    let raw = hours * category.baseCreditRate * qualityCreditMultiplier(q);
+    let raw =
+      hours *
+      category.baseCreditRate *
+      qualityCreditMultiplier(q) *
+      allocationCreditMultiplier(block);
     if (block.randomBonusApplied) raw *= 1.5;
     if (category.isFreeTime) spent += raw;
     else earned += raw;
@@ -177,7 +185,11 @@ function qualityScore(rows: BlockRow[], date: string, timezone: string) {
     );
     if (q === "wasted") {
       wasted += mins;
-    } else if (category.name === CHORES_CATEGORY_NAME || block.quality === "chores") {
+    } else if (
+      category.name === COOKING_CLEANING_CATEGORY_NAME ||
+      category.name === LEGACY_CHORES_NAME ||
+      block.quality === "chores"
+    ) {
       chores += mins;
     } else if (q === "useful") {
       useful += mins;
