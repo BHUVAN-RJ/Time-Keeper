@@ -62,7 +62,13 @@ export function ShopClient({ initial }: { initial: ShopPageData }) {
 
       <section className="flex flex-col gap-3">
         <div className="eyebrow px-1">Rewards</div>
-        {data.items.map((item) => (
+        {data.items.length === 0 ? (
+          <p className="px-1 text-[13px] text-tk-ink-3">
+            Shop catalog is empty — refresh in a moment or contact support if this
+            persists.
+          </p>
+        ) : (
+          data.items.map((item) => (
           <div key={item.id} className="card flex flex-col gap-2 p-4">
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -92,7 +98,8 @@ export function ShopClient({ initial }: { initial: ShopPageData }) {
                   : "Need more points"}
             </button>
           </div>
-        ))}
+          ))
+        )}
       </section>
 
       {data.redemptions.length > 0 ? (

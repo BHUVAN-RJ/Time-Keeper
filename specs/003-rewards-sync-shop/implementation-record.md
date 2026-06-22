@@ -70,6 +70,14 @@ npm run typecheck && npm run lint
 
 **Note:** `0016` was hand-trimmed to delta-only SQL (add columns + shop tables). Do not replace with a full drizzle-kit snapshot migration on existing databases.
 
+**Production:** Vercel deploy does not run migrations. After merging schema changes, run:
+
+```bash
+cd web && npm run db:migrate:prod   # uses .env.production Turso credentials
+```
+
+Then load `/shop` once (or rely on `ensureShopCatalog()` on first visit) to seed catalog items.
+
 **Git push:** use `gh auth setup-git` if HTTPS push fails with the wrong GitHub account.
 
 ## Manual verification

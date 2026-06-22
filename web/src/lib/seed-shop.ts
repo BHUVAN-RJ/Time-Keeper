@@ -34,6 +34,7 @@ export async function ensureShopCatalog(): Promise<void> {
       costPoints: item.costPoints,
       active: true,
       sortOrder: item.sortOrder,
+      createdAt: new Date(),
     });
   }
 }
